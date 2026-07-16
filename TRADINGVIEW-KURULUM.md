@@ -1,4 +1,4 @@
-# FinPilot Multi-Market v3.0 — Kurulum
+# FinPilot Multi-Market v3.1 — Ultimate Kurulum
 
 FinPilot geniş BIST ve Binance USDT spot evrenini kendi tarar; `YATIR`/`YATIRMA`, yön olasılıkları, alış limiti ve stop-limit araştırma planı üretir. Gerçek emir göndermez, İş Bankası/İş Yatırım veya Binance hesabına bağlanmaz ve kullanıcı adı, şifre ya da API anahtarı istemez.
 
@@ -10,7 +10,7 @@ FinPilot geniş BIST ve Binance USDT spot evrenini kendi tarar; `YATIR`/`YATIRMA
 4. **Paketlenmemiş öğe yükle** düğmesine bas ve paketteki `extension` klasörünü seç.
 5. TradingView'i aç. Sağ alttaki **✦ AI** düğmesine veya Chrome araç çubuğundaki FinPilot simgesine bas.
 
-İlk açılışta kayıt yoksa tarama kendiliğinden başlar. Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir. Tek manuel kontrol **ŞİMDİ TÜM PİYASALARI ARAŞTIR** düğmesidir.
+İlk açılışta kayıt yoksa tarama kendiliğinden başlar. Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir. Tek isteğe bağlı ayar **kâğıt sermaye** tutarıdır; adet ve azami TL kayıp bunun üzerinden hesaplanır. Tarama için **ŞİMDİ TÜM PİYASALARI ARAŞTIR** düğmesi dışında sembol, fiyat veya CSV girilmez.
 
 Uzantıyı güncellediğinde `chrome://extensions` sayfasında FinPilot kartındaki yenile simgesine bir kez bas.
 
@@ -40,6 +40,15 @@ Her varlıkta şu kontroller birlikte çalışır:
 11. Piyasa özel temel/KAP olayları veya likidite/BTC kapıları
 12. Destek, EMA ve ATR tabanlı üç emir planı
 13. Açık kâğıt işlemlerle korelasyon, sektör ve piyasa yoğunluğu sınırı
+14. OHLC, tekrar zaman, uç hareket ve zaman boşluğu için veri karantinası
+15. BIST gün/hafta/ay veya kripto 4 saat/gün/hafta çoklu zaman teyidi
+16. Piyasa medyanı ve kriptoda BTC karşısında göreli güç
+17. Tahmin aralığı genişliğine göre güvenilirlik kapısı
+18. Kriptoda anlık bid/ask spread ve fiyat adımı denetimi
+19. Kâğıt sermayeden adet, pozisyon tutarı ve azami TL kayıp
+20. Toplam stop riski ile BIST `-%10` / kripto `-%20` portföy şoku
+21. Kâğıt sonuçlarda performans ve Brier kalibrasyon sürüklenmesi kilidi
+22. Son taramadan beri karar değişimi ve tam sonraki koşul günlüğü
 
 | Etiket | Anlamı |
 | --- | --- |
@@ -65,7 +74,7 @@ Geçmiş sekmesi gerçek emir, gerçekleşme veya portföy kaydı değildir. Kap
 
 Sistem destek geri çekilmesi, EMA yeniden testi ve ATR dengeli planı ayrı ayrı sınar; geçerli olanlar içinden seçilen stratejiye uygun planı öne alır. Seviyeler gerçek emir değildir. Stop-limit tetiklendiğinde yalnızca limit emir oluşur; sert fiyat boşluğunda piyasa stop-limit fiyatının altına geçerse emir gerçekleşmeyebilir. Kripto 24/7 işlem gördüğü için bu risk hafta sonu da devam eder.
 
-FinPilot portföy yoğunluğuna göre en fazla `%0,50` başlangıç risk bütçesini düşüren bir araştırma oranı gösterir; adet veya gerçek emir üretmez. Gerçek para düşünmeden önce sinyalleri en az 30 seans/uygun sayıda 4 saatlik dönem boyunca kâğıt üzerinde izle.
+FinPilot portföy yoğunluğuna göre en fazla `%0,50` başlangıç risk bütçesi kullanır. Girilen kâğıt sermayeden aşağı yuvarlanmış adet, pozisyon tutarı ve stop gerçekleşirse yaklaşık azami TL kaybı gösterir; bunlar gerçek emir değildir. Gerçek para düşünmeden önce sinyalleri en az 30 seans/uygun sayıda 4 saatlik dönem boyunca kâğıt üzerinde izle.
 
 ## Veri ve hata davranışı
 
@@ -76,14 +85,42 @@ FinPilot portföy yoğunluğuna göre en fazla `%0,50` başlangıç risk bütçe
 - Bir havuzun `%70`inden azı okunursa o piyasanın olumlu sinyali kapanır.
 - Uyarılar panelin altındaki **veri uyarısı** bölümünde sembol bazında görünür.
 
-## TradingView Pine araçları — isteğe bağlı
+## TradingView Ultimate ile önerilen kurulum
 
-Chrome paneli için Pine kodu kurmak zorunda değilsin. Grafik üzerinde ayrıca teknik teyit istersen:
+Chrome paneli Pine koduna ihtiyaç duymaz. Ultimate üyeliği iki ayrı işte kullanılır:
 
-- `tradingview/FinPilot_Watchlist_Scanner_v1.pine`: Pine Screener sıralama göstergesi
-- `tradingview/FinPilot_Adaptive_Agent_v1.pine`: seçilen grafikte geçmiş strateji testi
+| Araç | Dosya | İşlev |
+| --- | --- | --- |
+| Pine Screener radarı | `tradingview/FinPilot_Watchlist_Scanner_v1.pine` | İzleme listesindeki sembolleri çoklu zaman, göreli güç, veri sağlığı ve teknik puanla ön elemeden geçirir. |
+| Kâğıt strateji | `tradingview/FinPilot_Adaptive_Agent_v1.pine` | Seçilen grafikte limit giriş, ATR stop, iki hedef, trailing stop, risk/adet ve koruma kurallarını backtest eder. |
 
-Pine kodunu Not Defteri ile aç, TradingView'deki **Pine Editor** alanına yapıştır, **Save** ve **Add to chart** düğmelerine bas. Pine KAP'ı, İş Yatırım temel tablosunu ve Chrome motorundaki bütün stres araştırmasını okuyamadığı için Pine'daki ön aday nihai `YATIR` değildir.
+### 1. Pine Screener radarı
+
+1. Radar dosyasını düz metin olarak açıp tamamını TradingView **Pine Editor** alanına yapıştır.
+2. **Save** ve **Add to chart** ile kaydet; kişisel Pine göstergelerin arasında görünür.
+3. TradingView'de Pine Screener'ı aç, taranacak BIST veya Binance USDT izleme listesini seç ve gösterge olarak **FinPilot Ultimate Radar v3.1** kullan.
+4. İlk filtreyi `On karar = 1` yap. Yardımcı sıralamada `Birleşik Puan`, `Çoklu Zaman Uyum`, `20 Bar Göreli Güç %`, `Veri Sağlığı`, `ATR %` ve `ADX` sütunlarını kullan.
+5. Radar sonucu yalnız teknik **ön adaydır**. Chrome kartı KAP/temel, walk-forward, tahmin güveni, spread ve portföy stresini de geçmeden nihai `YATIR` yazmaz.
+
+Radar özellikle Pine Screener'ın belgelenen sınırlarına göre hazırlanmıştır: tam 5 `request.*`, 10 `plot` ve 2 alarm koşulu kullanır. Screener tek göstergenin ilk 10 çıktısını ve son 500 barı işler; bu nedenle dosyaya rastgele ek plot/request ekleme.
+
+### 2. Kâğıt strateji ve Deep Backtesting
+
+1. Strateji dosyasını ayrı bir Pine betiği olarak kaydet ve standart mum grafiğine ekle. Heikin Ashi/Renko gibi standart dışı grafiklerde karar kapısı kapanır.
+2. BIST için başlangıçta `1G`, kripto için `4s` grafik kullan. Betik üst zamanları otomatik olarak günlük/haftalık veya haftalık/aylık teyit eder.
+3. **Strategy Tester → Deep Backtesting** ile farklı piyasa dönemlerini ayrı ayrı sınayarak sonuçların tek döneme bağlı olup olmadığını kontrol et.
+4. `Use Bar Magnifier` kodda açıktır. Ultimate geçmiş bar kapsamı ve alt zaman verisi elverdiğinde limit/stop dolumlarını daha gerçekçi simüle eder.
+5. Komisyon, kayma ve başlangıç sermayesini kendi gerçekçi koşullarına göre değiştir. Sonuç yalnız bu varsayımlar altında geçerlidir.
+6. Strateji önce sıkı ex-ante koşullarla kâğıt işlem üretir; en az işlem sayısı oluşunca geçmiş kazanma, kâr faktörü ve beklenen değer kapısını ayrıca gösterir. Kâğıt veri oluşmadan “geçmiş kapısı”nı giriş şartı yapmak sıfır işlemli bir döngü yaratacağı için yapılmamıştır.
+
+### 3. Ultimate alarmları
+
+- Radar için `FinPilot YATIR ön adayı` ve `FinPilot aday bozuldu` koşullarını yalnız **bar kapanışında** çalışacak şekilde kur.
+- Strateji alarmında `Order fills and alert() function calls` seçeneğini kullan. Giriş mesajı sembol, zaman dilimi, puan, çoklu zaman puanı, göreli güç, limit, stop ve kâğıt adetini JSON olarak taşır.
+- Webhook kullanacaksan TradingView iki aşamalı doğrulama ister. Webhook gövdesine parola, banka/borsa anahtarı veya başka bir sır koyma.
+- FinPilot bu webhookları aracı kuruma iletmez. Ultimate üyelik de tek başına otomatik emir yetkisi veya TradingView piyasa-veri API'si sağlamaz.
+
+Ultimate planının yüksek alarm ve grafik limitleri daha fazla izleme listesi ve paralel teyit kurmaya yarar; kâr olasılığını garanti etmez. Pine KAP'ın güncel metnini, İş Yatırım temel tablosunu veya Chrome motorundaki bütün stres araştırmasını okuyamaz.
 
 ## Önemli gerçek
 
@@ -102,3 +139,6 @@ Uzantı İş Yatırım, Borsa İstanbul, KAP, Binance veya TradingView tarafınd
 - [Binance Developers — Spot REST API](https://developers.binance.com/en/docs/binance-spot-api-docs/rest-api)
 - [TradingView — Fiyat/indikatör verisi için halka açık API bulunmaması](https://www.tradingview.com/support/solutions/43000474413-i-need-access-to-your-api-in-order-to-get-data-or-indicator-values/)
 - [TradingView — Pine Screener gereksinimleri](https://www.tradingview.com/support/solutions/43000742436-tradingview-pine-screener-key-features-and-requirements/)
+- [TradingView — Plan karşılaştırması ve Ultimate limitleri](https://www.tradingview.com/pricing/)
+- [TradingView — Webhook alarm kurulumu](https://www.tradingview.com/support/solutions/43000529348-how-to-configure-webhook-alerts/)
+- [TradingView — Bar Magnifier](https://www.tradingview.com/support/solutions/43000669285-what-is-bar-magnifier-backtesting-mode/)

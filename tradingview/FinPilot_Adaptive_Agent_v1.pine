@@ -1,8 +1,8 @@
 //@version=6
 //@strategy_alert_message {{strategy.order.alert_message}}
 strategy(
-     "FinPilot Adaptive Agent v2.0 — Paper Trading",
-     shorttitle = "FinPilot Agent",
+     "FinPilot Ultimate Strategy v3.1 — Paper Trading",
+     shorttitle = "FinPilot Ultimate",
      overlay = true,
      initial_capital = 100000,
      pyramiding = 0,
@@ -28,7 +28,6 @@ string G_DISPLAY = "7 — Görünüm"
 
 int fastLen = input.int(21, "Hızlı EMA", 5, 100, group = G_TREND)
 int slowLen = input.int(55, "Yavaş EMA", 20, 250, group = G_TREND)
-string higherTf = input.timeframe("1D", "Üst zaman dilimi", group = G_TREND)
 int adxLen = input.int(14, "DMI uzunluğu", 5, 50, group = G_TREND)
 int adxSmooth = input.int(14, "ADX yumuşatma", 5, 50, group = G_TREND)
 float minAdx = input.float(18.0, "Minimum ADX", 5, 60, 0.5, group = G_TREND)
@@ -40,6 +39,7 @@ int macdSignal = input.int(9, "MACD sinyal", 2, 50, group = G_MOMENTUM)
 int volumeLen = input.int(20, "Hacim ortalaması", 5, 100, group = G_MOMENTUM)
 int breakoutLen = input.int(20, "Kırılım penceresi", 5, 100, group = G_MOMENTUM)
 float scoreThreshold = input.float(62.0, "Minimum kurulum puanı", 40, 90, 1, group = G_MOMENTUM)
+float maxSingleMovePct = input.float(25.0, "Tek mum azami hareket (%)", 5.0, 80.0, 1.0, group = G_MOMENTUM)
 
 bool useFundamentals = input.bool(true, "Hisselerde finansal veriyi kullan", tooltip = "Kripto, döviz veya finansal verisi olmayan sembollerde teknik analiz tek başına devam eder.", group = G_FUNDAMENTAL)
 string fiscalPeriod = input.string("FQ", "Bilanço dönemi", options = ["FQ", "FH", "FY"], group = G_FUNDAMENTAL)
@@ -75,12 +75,25 @@ bool showLevels = input.bool(true, "Stop ve hedefleri göster", group = G_DISPLA
 // ─────────────────────────────────────────────────────────────────────────────
 float emaFast = ta.ema(close, fastLen)
 float emaSlow = ta.ema(close, slowLen)
+string mediumTf = timeframe.isintraday ? "1D" : "1W"
+string higherTf = timeframe.isintraday ? "1W" : "1M"
+string benchmarkSymbol = syminfo.type == "crypto" ? "BINANCE:BTCUSDT" : "BIST:XU100"
 // [1] + lookahead_on returns the last confirmed HTF bar without leaking future data.
-float htfClose = request.security(syminfo.tickerid, higherTf, close[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
-float htfEma = request.security(syminfo.tickerid, higherTf, ta.ema(close, slowLen)[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[mediumClose, mediumFast, mediumSlow] = request.security(syminfo.tickerid, mediumTf, [close[1], ta.ema(close, fastLen)[1], ta.ema(close, slowLen)[1]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[higherClose, higherFast, higherSlow] = request.security(syminfo.tickerid, higherTf, [close[1], ta.ema(close, fastLen)[1], ta.ema(close, slowLen)[1]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[benchmarkClose, benchmark20, benchmark60] = request.security(benchmarkSymbol, timeframe.period, [close[1], close[21], close[61]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
 [plusDI, minusDI, adx] = ta.dmi(adxLen, adxSmooth)
-bool longTrend = emaFast > emaSlow and close > emaSlow and htfClose > htfEma
-bool shortTrend = emaFast < emaSlow and close < emaSlow and htfClose < htfEma
+bool primaryUp = emaFast > emaSlow and close > emaSlow
+bool mediumUp = mediumFast > mediumSlow and mediumClose > mediumSlow
+bool higherUp = higherFast > higherSlow and higherClose > higherSlow
+bool primaryDown = emaFast < emaSlow and close < emaSlow
+bool mediumDown = mediumFast < mediumSlow and mediumClose < mediumSlow
+bool higherDown = higherFast < higherSlow and higherClose < higherSlow
+float mtfScore = (primaryUp ? 45.0 : 0.0) + (mediumUp ? 30.0 : 0.0) + (higherUp ? 25.0 : 0.0)
+bool mtfLongOk = mtfScore >= 75
+bool mtfShortOk = primaryDown and mediumDown and higherDown
+bool longTrend = primaryUp and mediumUp and higherUp
+bool shortTrend = primaryDown and mediumDown and higherDown
 bool trendRegime = adx >= minAdx
 
 // Agent 2: Momentum, liquidity, breakout and volatility
@@ -97,26 +110,40 @@ bool shortBreakout = close < previousLow
 bool volatilityOk = atrPct > 0.15 and atrPct <= maxAtrPct
 bool standardChart = chart.is_standard
 bool sessionOk = not useSession or not na(time(timeframe.period, tradeSession))
+float singleMovePct = close[1] > 0 ? math.abs(close / close[1] - 1.0) * 100.0 : na
+bool ohlcValid = close > 0 and open > 0 and high >= math.max(open, close) and low <= math.min(open, close) and high >= low
+bool dataIntegrityOk = ohlcValid and not na(atr) and not na(singleMovePct) and singleMovePct <= maxSingleMovePct
+float assetReturn20 = close[21] > 0 ? close[1] / close[21] - 1.0 : na
+float assetReturn60 = close[61] > 0 ? close[1] / close[61] - 1.0 : na
+float benchmarkReturn20 = benchmark20 > 0 ? benchmarkClose / benchmark20 - 1.0 : na
+float benchmarkReturn60 = benchmark60 > 0 ? benchmarkClose / benchmark60 - 1.0 : na
+float relativeStrengthPct = not na(assetReturn20) and not na(assetReturn60) and not na(benchmarkReturn20) and not na(benchmarkReturn60) ? ((assetReturn20 - benchmarkReturn20) * 0.65 + (assetReturn60 - benchmarkReturn60) * 0.35) * 100.0 : na
+bool relativeLongOk = not na(relativeStrengthPct) and relativeStrengthPct > 0
+bool relativeShortOk = not na(relativeStrengthPct) and relativeStrengthPct < 0
 
 float longScore = 0.0
 longScore += emaFast > emaSlow ? 18.0 : 0.0
 longScore += close > emaFast ? 10.0 : 0.0
-longScore += htfClose > htfEma ? 16.0 : 0.0
+longScore += mediumUp ? 8.0 : 0.0
+longScore += higherUp ? 8.0 : 0.0
 longScore += adx >= minAdx and plusDI > minusDI ? 14.0 : 0.0
 longScore += rsi >= 52 and rsi <= 72 ? 12.0 : 0.0
 longScore += macdHist > 0 and macdLine > macdSignalLine ? 12.0 : 0.0
 longScore += liquidEnough ? 8.0 : 0.0
 longScore += longBreakout ? 10.0 : 0.0
+longScore := math.max(0.0, math.min(100.0, longScore + (relativeLongOk ? 4.0 : -4.0)))
 
 float shortScore = 0.0
 shortScore += emaFast < emaSlow ? 18.0 : 0.0
 shortScore += close < emaFast ? 10.0 : 0.0
-shortScore += htfClose < htfEma ? 16.0 : 0.0
+shortScore += mediumDown ? 8.0 : 0.0
+shortScore += higherDown ? 8.0 : 0.0
 shortScore += adx >= minAdx and minusDI > plusDI ? 14.0 : 0.0
 shortScore += rsi <= 48 and rsi >= 28 ? 12.0 : 0.0
 shortScore += macdHist < 0 and macdLine < macdSignalLine ? 12.0 : 0.0
 shortScore += liquidEnough ? 8.0 : 0.0
 shortScore += shortBreakout ? 10.0 : 0.0
+shortScore := math.max(0.0, math.min(100.0, shortScore + (relativeShortOk ? 4.0 : -4.0)))
 
 // Agent 3: Available company financials. Missing values never get fabricated.
 float epsTtm = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", ignore_invalid_symbol = true)
@@ -183,9 +210,9 @@ float cappedQty = math.min(rawQty, maxQtyByCapital)
 float orderQty = integerQty ? math.floor(cappedQty) : cappedQty
 bool quantityOk = orderQty > 0
 
-bool commonEntryFilter = barstate.isconfirmed and standardChart and sessionOk and volatilityOk and guardsOk and cooldownOk and quantityOk and strategy.position_size == 0
-bool longSignal = commonEntryFilter and allowLong and longTrend and trendRegime and longScore >= scoreThreshold
-bool shortSignal = commonEntryFilter and allowShort and shortTrend and trendRegime and shortScore >= scoreThreshold
+bool commonEntryFilter = barstate.isconfirmed and standardChart and sessionOk and volatilityOk and dataIntegrityOk and guardsOk and cooldownOk and quantityOk and strategy.position_size == 0
+bool longSignal = commonEntryFilter and allowLong and longTrend and mtfLongOk and relativeLongOk and trendRegime and longScore >= scoreThreshold
+bool shortSignal = commonEntryFilter and allowShort and shortTrend and mtfShortOk and relativeShortOk and trendRegime and shortScore >= scoreThreshold
 
 // Historical win probability uses beta-binomial smoothing. It is not a promise.
 float closedTrades = strategy.closedtrades
@@ -208,7 +235,14 @@ float suggestedStopTrigger = math.round(math.max(syminfo.mintick, suggestedLimit
 float suggestedStopLimit = math.round(math.max(syminfo.mintick, suggestedStopTrigger - math.max(atr * 0.12, syminfo.mintick * 3.0)) / syminfo.mintick) * syminfo.mintick
 float suggestedTargetOne = math.round((suggestedLimit + suggestedRisk * target1R) / syminfo.mintick) * syminfo.mintick
 float suggestedTargetTwo = math.round((suggestedLimit + suggestedRisk * target2R) / syminfo.mintick) * syminfo.mintick
-bool technicalPreCandidate = longSignal and historicalEdge and (not useFundamentals or not fundamentalAvailable or fundamentalScore >= 55)
+float suggestedShortLimit = math.round((close + atr * 0.12) / syminfo.mintick) * syminfo.mintick
+bool fundamentalLongOk = not useFundamentals or not fundamentalAvailable or fundamentalScore >= 55
+bool fundamentalShortOk = not useFundamentals or not fundamentalAvailable or fundamentalScore <= 45
+// Strict ex-ante research signals create paper trades. The historical edge is
+// evaluated afterwards; requiring it before the first trade would deadlock a backtest.
+bool technicalPreCandidate = longSignal and fundamentalLongOk
+bool shortTechnicalCandidate = shortSignal and fundamentalShortOk
+bool panelPreCandidate = technicalPreCandidate and historicalEdge
 
 // Agent 5: Order creation, partial targets and custom trailing stop
 var float entryAtr = na
@@ -219,18 +253,22 @@ var float targetOne = na
 var float targetTwo = na
 var float runnerStop = na
 
-string longEntryMessage = '{"source":"FinPilot","mode":"paper","event":"LONG_ENTRY","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","score":' + str.tostring(longScore, "#.0") + ',"historicalWinProbability":' + str.tostring(smoothedWinProbability, "#.0") + ',"riskPct":' + str.tostring(adaptiveRiskPct, "#.00") + ',"qty":' + str.tostring(orderQty) + '}'
-string shortEntryMessage = '{"source":"FinPilot","mode":"paper","event":"SHORT_ENTRY","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","score":' + str.tostring(shortScore, "#.0") + ',"historicalWinProbability":' + str.tostring(smoothedWinProbability, "#.0") + ',"riskPct":' + str.tostring(adaptiveRiskPct, "#.00") + ',"qty":' + str.tostring(orderQty) + '}'
+string longEntryMessage = '{"source":"FinPilot","version":"3.1","mode":"paper","event":"LONG_LIMIT_CREATED","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","score":' + str.tostring(longScore, "#.0") + ',"mtfScore":' + str.tostring(mtfScore, "#.0") + ',"relativeStrengthPct":' + str.tostring(relativeStrengthPct, "#.00") + ',"limit":' + str.tostring(suggestedLimit) + ',"stopTrigger":' + str.tostring(suggestedStopTrigger) + ',"stopLimit":' + str.tostring(suggestedStopLimit) + ',"riskPct":' + str.tostring(adaptiveRiskPct, "#.00") + ',"qty":' + str.tostring(orderQty) + '}'
+string shortEntryMessage = '{"source":"FinPilot","version":"3.1","mode":"paper","event":"SHORT_LIMIT_CREATED","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","score":' + str.tostring(shortScore, "#.0") + ',"mtfScore":' + str.tostring(mtfScore, "#.0") + ',"relativeStrengthPct":' + str.tostring(relativeStrengthPct, "#.00") + ',"limit":' + str.tostring(suggestedShortLimit) + ',"riskPct":' + str.tostring(adaptiveRiskPct, "#.00") + ',"qty":' + str.tostring(orderQty) + '}'
 
-if longSignal
+if technicalPreCandidate
     entryAtr := atr
-    strategy.entry("Long", strategy.long, qty = orderQty, comment = "FinPilot Long", alert_message = longEntryMessage)
+    strategy.entry("Long", strategy.long, qty = orderQty, limit = suggestedLimit, comment = "FinPilot Long Limit", alert_message = longEntryMessage)
     alert(longEntryMessage, alert.freq_once_per_bar_close)
+else if strategy.position_size == 0
+    strategy.cancel("Long")
 
-if shortSignal
+if shortTechnicalCandidate
     entryAtr := atr
-    strategy.entry("Short", strategy.short, qty = orderQty, comment = "FinPilot Short", alert_message = shortEntryMessage)
+    strategy.entry("Short", strategy.short, qty = orderQty, limit = suggestedShortLimit, comment = "FinPilot Short Limit", alert_message = shortEntryMessage)
     alert(shortEntryMessage, alert.freq_once_per_bar_close)
+else if strategy.position_size == 0
+    strategy.cancel("Short")
 
 bool newLong = strategy.position_size > 0 and strategy.position_size[1] <= 0
 bool newShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
@@ -292,18 +330,22 @@ plot(smoothedWinProbability, "FinPilot Historical Win Probability", display = di
 plot(profitFactor, "FinPilot Profit Factor", display = display.data_window)
 plot(observedMaxDrawdownPct, "FinPilot Max Drawdown %", display = display.data_window)
 plot(fundamentalAvailable ? fundamentalScore : na, "FinPilot Fundamental Score", display = display.data_window)
+plot(mtfScore, "FinPilot Multi-Timeframe Score", display = display.data_window)
+plot(relativeStrengthPct, "FinPilot Relative Strength %", display = display.data_window)
+plot(dataIntegrityOk ? 1 : 0, "FinPilot Data Integrity", display = display.data_window)
 
-plotshape(technicalPreCandidate, title = "FinPilot YATIR Ön Adayı", text = "ÖN ADAY", style = shape.labelup, location = location.belowbar, color = color.new(color.lime, 0), textcolor = color.black, size = size.tiny)
-plotshape(shortSignal, title = "FinPilot Short Setup", text = "SAT", style = shape.labeldown, location = location.abovebar, color = color.new(color.red, 0), textcolor = color.white, size = size.tiny)
+plotshape(technicalPreCandidate and not historicalEdge, title = "FinPilot Kâğıt Test Sinyali", text = "PAPER", style = shape.labelup, location = location.belowbar, color = color.new(color.aqua, 12), textcolor = color.black, size = size.tiny)
+plotshape(panelPreCandidate, title = "FinPilot YATIR Ön Adayı", text = "ÖN ADAY", style = shape.labelup, location = location.belowbar, color = color.new(color.lime, 0), textcolor = color.black, size = size.tiny)
+plotshape(shortTechnicalCandidate, title = "FinPilot Short Setup", text = "SAT", style = shape.labeldown, location = location.abovebar, color = color.new(color.red, 0), textcolor = color.white, size = size.tiny)
 
 color regimeColor = not showBackground ? na : drawdownGuard or dailyGuard ? color.new(color.red, 88) : trendRegime and longTrend ? color.new(color.green, 92) : trendRegime and shortTrend ? color.new(color.red, 93) : color.new(color.orange, 95)
 bgcolor(regimeColor, title = "FinPilot Piyasa Rejimi")
 
 // Agent dashboard
-var table dashboard = table.new(position.top_right, 2, 19, border_width = 1, border_color = color.new(color.gray, 70), bgcolor = color.new(color.black, 12))
+var table dashboard = table.new(position.top_right, 2, 22, border_width = 1, border_color = color.new(color.gray, 70), bgcolor = color.new(color.black, 12))
 if barstate.islast and showDashboard
-    string decision = not standardChart or dailyGuard or drawdownGuard or streakGuard ? "YATIRMA" : technicalPreCandidate ? "ÖN ADAY · PANEL" : "YATIRMA"
-    color decisionColor = technicalPreCandidate ? color.lime : color.red
+    string decision = not standardChart or not dataIntegrityOk or dailyGuard or drawdownGuard or streakGuard ? "YATIRMA" : panelPreCandidate ? "ÖN ADAY · PANEL" : technicalPreCandidate ? "KÂĞIT TEST" : "YATIRMA"
+    color decisionColor = panelPreCandidate ? color.lime : technicalPreCandidate ? color.aqua : color.red
     table.cell(dashboard, 0, 0, "FinPilot Agent", text_color = color.lime, bgcolor = color.new(color.green, 80), text_size = size.small)
     table.cell(dashboard, 1, 0, "PAPER", text_color = color.orange, bgcolor = color.new(color.green, 80), text_size = size.small)
     table.cell(dashboard, 0, 1, "Karar", text_color = color.silver)
@@ -330,15 +372,21 @@ if barstate.islast and showDashboard
     table.cell(dashboard, 1, 11, "%" + str.tostring(atrPct, "#.1") + " / " + str.tostring(adx, "#.1"), text_color = volatilityOk ? color.white : color.red)
     table.cell(dashboard, 0, 12, "Rejim", text_color = color.silver)
     table.cell(dashboard, 1, 12, trendRegime ? (longTrend ? "Yükseliş trendi" : shortTrend ? "Düşüş trendi" : "Karışık") : "Yatay / zayıf", text_color = trendRegime ? color.white : color.orange)
-    table.cell(dashboard, 0, 13, "Alış limiti", text_color = color.silver)
-    table.cell(dashboard, 1, 13, str.tostring(suggestedLimit, format.mintick), text_color = color.aqua)
-    table.cell(dashboard, 0, 14, "Stop tetik / limit", text_color = color.silver)
-    table.cell(dashboard, 1, 14, str.tostring(suggestedStopTrigger, format.mintick) + " / " + str.tostring(suggestedStopLimit, format.mintick), text_color = color.red)
-    table.cell(dashboard, 0, 15, "Hedef 1 / 2", text_color = color.silver)
-    table.cell(dashboard, 1, 15, str.tostring(suggestedTargetOne, format.mintick) + " / " + str.tostring(suggestedTargetTwo, format.mintick), text_color = color.lime)
-    table.cell(dashboard, 0, 16, "Geçmiş kapısı", text_color = color.silver)
-    table.cell(dashboard, 1, 16, historicalEdge ? "GEÇTİ" : "GEÇMEDİ", text_color = historicalEdge ? color.lime : color.red)
-    table.cell(dashboard, 0, 17, "Nihai karar", text_color = color.silver)
-    table.cell(dashboard, 1, 17, "Chrome panelinde", text_color = color.orange)
-    table.cell(dashboard, 0, 18, "Uyarı", text_color = color.silver)
-    table.cell(dashboard, 1, 18, "KAP yok · garanti yok", text_color = color.orange)
+    table.cell(dashboard, 0, 13, "Çoklu zaman", text_color = color.silver)
+    table.cell(dashboard, 1, 13, str.tostring(mtfScore, "#") + "/100 · " + mediumTf + "/" + higherTf, text_color = mtfLongOk ? color.lime : color.red)
+    table.cell(dashboard, 0, 14, "Göreli güç", text_color = color.silver)
+    table.cell(dashboard, 1, 14, (relativeStrengthPct >= 0 ? "+" : "") + str.tostring(relativeStrengthPct, "#.00") + "%", text_color = relativeLongOk ? color.lime : color.red)
+    table.cell(dashboard, 0, 15, "Veri bütünlüğü", text_color = color.silver)
+    table.cell(dashboard, 1, 15, dataIntegrityOk ? "SAĞLIKLI" : "KARANTİNA", text_color = dataIntegrityOk ? color.lime : color.red)
+    table.cell(dashboard, 0, 16, "Alış limiti", text_color = color.silver)
+    table.cell(dashboard, 1, 16, str.tostring(suggestedLimit, format.mintick), text_color = color.aqua)
+    table.cell(dashboard, 0, 17, "Stop tetik / limit", text_color = color.silver)
+    table.cell(dashboard, 1, 17, str.tostring(suggestedStopTrigger, format.mintick) + " / " + str.tostring(suggestedStopLimit, format.mintick), text_color = color.red)
+    table.cell(dashboard, 0, 18, "Hedef 1 / 2", text_color = color.silver)
+    table.cell(dashboard, 1, 18, str.tostring(suggestedTargetOne, format.mintick) + " / " + str.tostring(suggestedTargetTwo, format.mintick), text_color = color.lime)
+    table.cell(dashboard, 0, 19, "Geçmiş kapısı", text_color = color.silver)
+    table.cell(dashboard, 1, 19, historicalEdge ? "GEÇTİ" : "KÂĞIT VERİ TOPLUYOR", text_color = historicalEdge ? color.lime : color.orange)
+    table.cell(dashboard, 0, 20, "Nihai karar", text_color = color.silver)
+    table.cell(dashboard, 1, 20, "Chrome panelinde", text_color = color.orange)
+    table.cell(dashboard, 0, 21, "Uyarı", text_color = color.silver)
+    table.cell(dashboard, 1, 21, "KAP yok · garanti yok", text_color = color.orange)

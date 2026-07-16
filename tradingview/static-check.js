@@ -70,6 +70,7 @@ assert.match(strategyCode, /strategy\s*\(/);
 assert.match(strategyCode, /strategy\.entry\s*\(/);
 assert.match(strategyCode, /strategy\.exit\s*\(/);
 assert.match(strategyCode, /strategy\.close_all\s*\(/);
+assert.match(strategyCode, /strategy\.cancel\s*\(/);
 assert.match(strategyCode, /request\.financial\s*\(/);
 assert.match(strategyCode, /commission_value\s*=/);
 assert.match(strategyCode, /maxDailyLoss/);
@@ -79,6 +80,12 @@ assert.match(strategyCode, /alert_message\s*=/);
 assert.match(strategy, /Stop tetik \/ limit/);
 assert.match(strategy, /Chrome panelinde/);
 assert.match(strategy, /KAP yok · garanti yok/);
+assert.match(strategy, /FinPilot Ultimate Strategy v3\.1/);
+assert.match(strategyCode, /if\s+technicalPreCandidate\s+entryAtr\s*:=\s*atr\s+strategy\.entry\s*\(\s*,\s*strategy\.long\s*,[^\n]*limit\s*=\s*suggestedLimit/s);
+assert.doesNotMatch(strategyCode, /if\s+longSignal\s+entryAtr\s*:=\s*atr\s+strategy\.entry/s, "Gevsek longSignal dogrudan emir olusturmamali");
+assert.match(strategyCode, /dataIntegrityOk/);
+assert.match(strategyCode, /relativeStrengthPct/);
+assert.match(strategyCode, /mtfScore/);
 
 assert.match(scannerCode, /indicator\s*\(/);
 const requests = scannerCode.match(/request\.[a-zA-Z_]+\s*\(/g) || [];
@@ -87,5 +94,8 @@ assert.equal(requests.length, 5, "Tarayici tam bes request.* cagrisi kullanmali"
 assert.ok(plots.length <= 10, "Tarayici en fazla on plot kullanmali");
 assert.match(scannerCode, /alertcondition\s*\(/);
 assert.match(scanner, /YATIR ön adayı/);
+assert.match(scanner, /FinPilot Ultimate Radar v3\.1/);
+assert.match(scannerCode, /mtfScore/);
+assert.match(scannerCode, /relative20/);
 
 console.log(`FinPilot Pine static checks: OK (${requests.length} request, ${plots.length} plot)`);

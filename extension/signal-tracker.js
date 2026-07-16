@@ -64,6 +64,9 @@
       realizedR: 0,
       resultR: null,
       evidenceGrade: item.evidenceGrade || item.validation?.evidenceGrade || null,
+      predictedProbabilityUp: (item.validation?.calibratedProbability ?? item.calibratedProbabilityUp) == null ? null : finite(item.validation?.calibratedProbability ?? item.calibratedProbabilityUp, null),
+      positionSizing: item.positionSizing ? { ...item.positionSizing } : null,
+      quantity: finite(item.positionSizing?.quantity, 0),
       returnSignature: Array.isArray(item.returnSignature) ? item.returnSignature : [],
       eventLog: [{ status: "EMİR BEKLİYOR", at: now.toISOString(), detail: `Limit ${entry}; stop ${stop}.` }],
     };
