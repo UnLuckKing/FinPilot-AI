@@ -1,7 +1,7 @@
 //@version=6
 //@strategy_alert_message {{strategy.order.alert_message}}
 strategy(
-     "FinPilot Adaptive Agent v1.2 — Paper Trading",
+     "FinPilot Adaptive Agent v2.0 — Paper Trading",
      shorttitle = "FinPilot Agent",
      overlay = true,
      initial_capital = 100000,

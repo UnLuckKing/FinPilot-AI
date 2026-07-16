@@ -1,13 +1,13 @@
 {
   "name": "finpilot-ai",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "test:tradingview": "node tradingview/static-check.js && node extension/engine.check.js && node extension/auto-scanner.check.js && node extension/panel.check.js",
+    "test:tradingview": "node tradingview/static-check.js && node extension/engine.check.js && node extension/auto-scanner.check.js && node extension/crypto-scanner.check.js && node extension/market-aggregator.check.js && node extension/signal-tracker.check.js && node extension/panel.check.js && node --check extension/background.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

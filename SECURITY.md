@@ -5,10 +5,11 @@ FinPilot yalnızca araştırma ve karar desteğidir. Aracı kurum hesabına bağ
 ## Güvenli kullanım
 
 - Önce en az 30 seans kâğıt üzerinde izleyin; geçmiş sonuçları gerçek kazanç garantisi saymayın.
-- `YATIR` yalnızca bütün veri, backtest, yön, temel analiz, stres, KAP ve piyasa kapıları birlikte geçtiğinde gösterilir.
+- `YATIR` yalnızca bütün veri, backtest, yön, yerel model, stres ve piyasa özel kapıları birlikte geçtiğinde gösterilir. BIST'te temel/KAP; kriptoda likidite/aşırı hareket/BTC rejimi ayrıca zorunludur.
 - Bir kaynak doğrulanamazsa sistem güvenlik gereği `YATIRMA` verir.
 - Alış limiti, stop tetik ve stop-limit fiyatları öneridir. Stop-limit emri sert fiyat boşluğunda hiç gerçekleşmeyebilir.
 - Kaynak koduna aracı kurum şifresi, erişim anahtarı veya `.env` dosyası eklemeyin.
+- Binance kapsamı yalnızca spot veridir; futures, kaldıraç, short veya hesap bağlantısı kullanılmaz.
 
 ## Açık bildirme
 

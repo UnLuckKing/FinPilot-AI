@@ -13,6 +13,7 @@
   const BIST_INDEX_CSV = "https://www.borsaistanbul.com/datum/hisse_endeks_ds.csv";
   const KAP_DIRECTORY_PAGE = "https://kap.org.tr/tr/bist-sirketler";
   const KAP_DISCLOSURE_SEARCH = "https://kap.org.tr/tr/bildirim-sorgu";
+  const KAP_PUBLIC_FEED = "https://www.kap.org.tr/tr/api/disclosures";
   const FALLBACK_UNIVERSE = [
     "AKBNK", "ALARK", "ASELS", "ASTOR", "BIMAS", "EKGYO", "ENKAI", "EREGL", "FROTO", "GARAN",
     "GUBRF", "ISCTR", "KCHOL", "KRDMD", "MGROS", "OYAKC", "PETKM", "PGSUS", "SAHOL", "SASA",
@@ -29,7 +30,8 @@
     maximumDirectionDownProbability: 36,
     minimumStressProfitability: 55,
     maximumDataAgeBusinessDays: 2,
-    deepResearchLimit: 6,
+    universeLimit: 120,
+    deepResearchLimit: 12,
     stopAtr: 2,
     rewardRisk: 2,
     horizon: 8,
@@ -71,6 +73,7 @@
   function parseDate(value) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     const text = String(value ?? "").trim();
+    if (/^\d{10,13}$/.test(text)) return Number(text.length === 10 ? `${text}000` : text);
     const microsoft = text.match(/\/Date\((\d+)/);
     if (microsoft) return Number(microsoft[1]);
     const local = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
@@ -299,6 +302,7 @@
   function parseKapMemberId(html) {
     const text = String(html || "");
     return text.match(/[?&]member=([a-f0-9]{20,})/i)?.[1]
+      || text.match(/\/tr\/sirket-bilgileri\/(?:ozet|genel)\/([a-f0-9]{20,})/i)?.[1]
       || text.match(/["']member(?:Oid|Id)?["']\s*:\s*["']([a-f0-9]{20,})/i)?.[1]
       || text.match(/data-member(?:-oid|-id)?=["']([a-f0-9]{20,})/i)?.[1]
       || null;
@@ -335,6 +339,106 @@
       recentRisks: recentRisks.slice(0, 5),
       latestEvents: events.slice(0, 3).map((event) => ({ date: event.date, text: event.text })),
     };
+  }
+
+  function collectKapStrings(value, depth = 0) {
+    if (depth > 5 || value == null) return [];
+    if (typeof value === "string" || typeof value === "number") return [String(value)];
+    if (Array.isArray(value)) return value.flatMap((item) => collectKapStrings(item, depth + 1));
+    if (typeof value === "object") return Object.values(value).flatMap((item) => collectKapStrings(item, depth + 1));
+    return [];
+  }
+
+  function kapEventDate(value) {
+    const timestamp = parseDate(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : localDateToIso(value);
+  }
+
+  function kapFeedValues(payload) {
+    return Array.isArray(payload) ? payload : Array.isArray(payload?.disclosures) ? payload.disclosures : Array.isArray(payload?.data) ? payload.data : [];
+  }
+
+  function parseKapDisclosureFeed(payload, now = new Date()) {
+    const values = kapFeedValues(payload);
+    const bySymbol = new Map();
+    const events = [];
+    for (const item of values) {
+      const basic = item?.basic || item || {};
+      const strings = collectKapStrings(basic);
+      const text = strings.join(" ").replace(/\s+/g, " ").trim();
+      const date = kapEventDate(basic.publishDate ?? basic.disclosureDate ?? basic.date ?? basic.createdAt ?? text);
+      if (!date || !text) continue;
+      const explicitStockText = collectKapStrings(basic.stockCodes ?? basic.relatedStocks ?? basic.stockCode ?? basic.company?.stockCodes).join(" ").toUpperCase();
+      const symbols = [...new Set((explicitStockText.match(/\b[A-Z][A-Z0-9]{2,5}\b/g) || []).filter((symbol) => !["BIST", "KAP", "TRY", "USD", "EUR"].includes(symbol)))];
+      const riskLabels = KAP_RISK_TERMS.filter((term) => term.pattern.test(text)).map((term) => term.label);
+      const event = {
+        date,
+        text: text.slice(0, 480),
+        symbols,
+        riskLabels,
+        disclosureIndex: basic.disclosureIndex ?? item?.disclosureIndex ?? null,
+      };
+      events.push(event);
+      for (const symbol of symbols) {
+        if (!bySymbol.has(symbol)) bySymbol.set(symbol, []);
+        bySymbol.get(symbol).push(event);
+      }
+    }
+    events.sort((a, b) => b.date.localeCompare(a.date));
+    for (const symbolEvents of bySymbol.values()) symbolEvents.sort((a, b) => b.date.localeCompare(a.date));
+    const lastDisclosureDate = events[0]?.date || null;
+    const feedFresh = Boolean(lastDisclosureDate) && businessDaysAge(lastDisclosureDate, now) <= 2;
+    const oldestDisclosureDate = events.at(-1)?.date || null;
+    return { available: events.length > 0 && feedFresh, feedFresh, lastDisclosureDate, oldestDisclosureDate, coverageBusinessDays: oldestDisclosureDate ? businessDaysAge(oldestDisclosureDate, now) : 0, events, bySymbol };
+  }
+
+  function kapRiskFromFeed(feed, symbol, now = new Date()) {
+    if (!feed?.available) return { available: false, blocked: true, status: "KAP güncel akışı doğrulanamadı", lastDisclosureDate: feed?.lastDisclosureDate || null, searchUrl: KAP_DISCLOSURE_SEARCH };
+    const events = feed.bySymbol?.get(symbol) || [];
+    const recentEvents = events.filter((event) => businessDaysAge(event.date, now) <= 7);
+    const recentRisks = recentEvents.flatMap((event) => event.riskLabels.map((label) => ({ label, date: event.date, text: event.text })))
+      .filter((event, index, all) => all.findIndex((candidate) => candidate.label === event.label && candidate.date === event.date) === index);
+    return {
+      available: true,
+      blocked: recentRisks.length > 0,
+      status: recentRisks.length ? "İnceleme gerekli" : "Güncel KAP akışında yakın risk yok",
+      coverage: "public-feed",
+      lastDisclosureDate: events[0]?.date || feed.lastDisclosureDate,
+      feedLastDisclosureDate: feed.lastDisclosureDate,
+      recentEventCount: recentEvents.length,
+      recentRisks: recentRisks.slice(0, 5),
+      latestEvents: events.slice(0, 3).map((event) => ({ date: event.date, text: event.text })),
+      searchUrl: `${KAP_DISCLOSURE_SEARCH}?stockCode=${encodeURIComponent(symbol)}`,
+    };
+  }
+
+  async function fetchKapDisclosureFeed(fetcher = fetch, now = new Date()) {
+    const collected = [];
+    const seen = new Set();
+    let afterDisclosureIndex = null;
+    let coverageComplete = false;
+    for (let page = 0; page < 24; page += 1) {
+      const url = afterDisclosureIndex == null ? KAP_PUBLIC_FEED : `${KAP_PUBLIC_FEED}?afterDisclosureIndex=${encodeURIComponent(afterDisclosureIndex)}`;
+      const response = await fetcher(url, { cache: "no-store", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(`KAP güncel bildirim akışı alınamadı (${response.status})`);
+      const values = kapFeedValues(await response.json());
+      if (!values.length) break;
+      for (const item of values) {
+        const index = item?.basic?.disclosureIndex ?? item?.disclosureIndex;
+        const key = index == null ? JSON.stringify(item).slice(0, 500) : String(index);
+        if (!seen.has(key)) { seen.add(key); collected.push(item); }
+      }
+      const pageFeed = parseKapDisclosureFeed(values, now);
+      if (pageFeed.oldestDisclosureDate && businessDaysAge(pageFeed.oldestDisclosureDate, now) > 7) { coverageComplete = true; break; }
+      const nextIndex = values.at(-1)?.basic?.disclosureIndex ?? values.at(-1)?.disclosureIndex;
+      if (nextIndex == null || String(nextIndex) === String(afterDisclosureIndex)) break;
+      afterDisclosureIndex = nextIndex;
+    }
+    const feed = { ...parseKapDisclosureFeed(collected, now), coverageComplete };
+    if (!feed.events.length) throw new Error("KAP güncel bildirim akışı boş döndü");
+    if (!feed.feedFresh) throw new Error(`KAP güncel bildirim akışı eski (${feed.lastDisclosureDate || "tarih yok"})`);
+    if (!feed.coverageComplete) throw new Error(`KAP akışında 7 iş günlük kapsam tamamlanamadı (${feed.coverageBusinessDays.toFixed(0)} iş günü)`);
+    return feed;
   }
 
   async function fetchKapDirectory(fetcher = fetch) {
@@ -392,6 +496,23 @@
     return { symbols: [...FALLBACK_UNIVERSE], source: "FinPilot likit BIST havuzu" };
   }
 
+  function selectBistUniverse(fundamentals, officialSymbols = [], limit = PROFILE.universeLimit) {
+    const official = new Set((officialSymbols || []).map((symbol) => String(symbol).toUpperCase()));
+    const candidates = [...(fundamentals instanceof Map ? fundamentals.entries() : [])].map(([symbol, value]) => {
+      const marketCap = finite(value?.marketCapTryM, NaN);
+      const freeFloat = finite(value?.freeFloatPct, NaN);
+      return {
+        symbol: String(symbol).toUpperCase(),
+        marketCap,
+        freeFloat,
+        liquidCap: Number.isFinite(marketCap) && Number.isFinite(freeFloat) ? marketCap * freeFloat / 100 : 0,
+        official: official.has(String(symbol).toUpperCase()),
+      };
+    }).filter((item) => /^[A-Z][A-Z0-9]{2,5}$/.test(item.symbol) && item.marketCap > 0 && item.freeFloat >= 5);
+    candidates.sort((a, b) => Number(b.official) - Number(a.official) || b.liquidCap - a.liquidCap || b.marketCap - a.marketCap || a.symbol.localeCompare(b.symbol));
+    return candidates.slice(0, Math.max(30, Math.floor(finite(limit, PROFILE.universeLimit)))).map((item) => item.symbol);
+  }
+
   async function fetchHistory(symbol, options = {}) {
     const fetcher = options.fetcher || fetch;
     const end = options.endDate ? new Date(options.endDate) : new Date();
@@ -440,7 +561,11 @@
     const forecasts = Object.fromEntries((analysis.forecasts || []).map((forecast) => [String(forecast.horizon), forecast]));
     const fiveDay = forecasts["5"];
     return {
+      market: "bist",
+      marketLabel: "BIST",
+      assetType: "HİSSE",
       symbol,
+      displaySymbol: symbol,
       action: "YATIRMA",
       eligible: false,
       preEligible,
@@ -448,6 +573,7 @@
       setupScore: analysis.setupScore,
       trendDirection: latest.trend,
       price: latest.close,
+      priceDecimals: 2,
       dataDate,
       dataAgeBusinessDays,
       dataFresh,
@@ -468,6 +594,11 @@
       fundamental: fundamental?.available ? fundamental : { available: false, score: 50, status: "Veri yok" },
       kap: { available: false, blocked: true, status: "KAP araştırması bekleniyor" },
       forecasts,
+      forecastDisplay: [
+        { key: "1", label: "1 GÜN" },
+        { key: "5", label: "5 GÜN" },
+        { key: "20", label: "20 GÜN" },
+      ],
       direction: fiveDay?.available ? fiveDay.direction : "BELİRSİZ",
       confidence: analysis.probabilityLabel,
       orderPlan,
@@ -525,12 +656,18 @@
     else reasons.push(`KAP kontrolü tamamlandı; son 7 iş gününde tanımlı risk işareti bulunmadı (${kapResult.recentEventCount || 0} bildirim incelendi).`);
     if (!marketGateOpen) reasons.push("Piyasa genişliği risk kapısı kapalı olduğu için YATIRMA.");
     if (!dataSufficient) reasons.push("Tarama kapsamı yetersiz olduğu için YATIRMA.");
+    const gates = { ...item.gates, kap: kapGate, market: marketGate };
+    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
+    const failedGates = Object.entries(gates).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateLabels[key] || key }));
     return {
       ...item,
       action: eligible ? "YATIR" : "YATIRMA",
       eligible,
+      nearMiss: !eligible && item.rankScore >= 55 && failedGates.length <= 3,
+      failedGates,
+      distanceToEligible: failedGates.length,
       kap: kapResult,
-      gates: { ...item.gates, kap: kapGate, market: marketGate },
+      gates,
       reasons,
       links: { ...item.links, kap: kapResult.searchUrl || kapResult.companyUrl || KAP_DISCLOSURE_SEARCH },
     };
@@ -568,7 +705,14 @@
     const now = options.now instanceof Date ? options.now : options.now ? new Date(options.now) : new Date();
     const universePromise = options.symbols ? Promise.resolve({ symbols: options.symbols, source: "Özel tarama havuzu" }) : fetchUniverse(fetcher);
     const fundamentalsPromise = options.fundamentals ? Promise.resolve({ data: options.fundamentals, warning: null }) : fetchFundamentals(fetcher).then((data) => ({ data, warning: null })).catch((error) => ({ data: new Map(), warning: error instanceof Error ? error.message : String(error) }));
-    const [universe, fundamentalResult] = await Promise.all([universePromise, fundamentalsPromise]);
+    const [baseUniverse, fundamentalResult] = await Promise.all([universePromise, fundamentalsPromise]);
+    const expandedSymbols = !options.symbols && fundamentalResult.data.size >= 100
+      ? selectBistUniverse(fundamentalResult.data, baseUniverse.symbols, options.universeLimit || PROFILE.universeLimit)
+      : baseUniverse.symbols;
+    const universe = {
+      symbols: expandedSymbols.length ? expandedSymbols : baseUniverse.symbols,
+      source: expandedSymbols.length > baseUniverse.symbols.length ? `İş Yatırım geniş likit BIST evreni · ${expandedSymbols.length}/${fundamentalResult.data.size}` : baseUniverse.source,
+    };
     const scanned = await scanSymbols(universe.symbols, { ...options, now, fundamentals: fundamentalResult.data });
     const positiveTrendCount = scanned.results.filter((item) => item.trendDirection > 0).length;
     const marketBreadthPct = scanned.results.length ? positiveTrendCount / scanned.results.length * 100 : 0;
@@ -580,12 +724,17 @@
     if (options.kapRisks instanceof Map) {
       for (const item of scanned.results) if (options.kapRisks.has(item.symbol)) kapResults.set(item.symbol, options.kapRisks.get(item.symbol));
     } else {
-      try {
-        const directory = options.kapDirectory instanceof Map ? options.kapDirectory : await fetchKapDirectory(fetcher);
-        const prioritized = [
+      const prioritized = [
           ...scanned.results.filter((item) => item.preEligible),
           ...scanned.results,
         ].filter((item, index, all) => all.findIndex((candidate) => candidate.symbol === item.symbol) === index).slice(0, PROFILE.deepResearchLimit);
+      try {
+        const feed = options.kapFeed || await fetchKapDisclosureFeed(fetcher, now);
+        for (const item of prioritized) kapResults.set(item.symbol, kapRiskFromFeed(feed, item.symbol, now));
+      } catch (feedError) {
+        kapWarnings.push({ symbol: "KAP AKIŞ", message: feedError instanceof Error ? feedError.message : String(feedError) });
+        try {
+          const directory = options.kapDirectory instanceof Map ? options.kapDirectory : await fetchKapDirectory(fetcher);
         let cursor = 0;
         const worker = async () => {
           while (cursor < prioritized.length) {
@@ -600,8 +749,9 @@
           }
         };
         await Promise.all(Array.from({ length: Math.min(3, prioritized.length) }, worker));
-      } catch (error) {
-        kapWarnings.push({ symbol: "KAP", message: error instanceof Error ? error.message : String(error) });
+        } catch (error) {
+          kapWarnings.push({ symbol: "KAP", message: error instanceof Error ? error.message : String(error) });
+        }
       }
     }
     const recommendations = scanned.results.map((item) => finalizeRecommendation(
@@ -625,7 +775,8 @@
       candidateCount: candidates.length,
       marketDecision: candidates.length ? `YATIR · ${candidates.length} hisse tüm kapıları geçti` : !dataSufficient ? "YATIRMA · tarama verisi yetersiz" : marketGateOpen ? "YATIRMA · tüm koşulları geçen hisse yok" : "YATIRMA · piyasa filtresi zayıf",
       marketRegime: { gateOpen: marketGateOpen, dataSufficient, coveragePct, breadthPct: marketBreadthPct, positiveTrendCount, sampleSize: scanned.results.length },
-      recommendations: recommendations.slice(0, 8),
+      recommendations: recommendations.slice(0, 30),
+      snapshot: recommendations.map((item) => ({ market: item.market, symbol: item.symbol, displaySymbol: item.displaySymbol, price: item.price, dataDate: item.dataDate, eligible: item.eligible })),
       errors: [...warnings, ...scanned.errors].slice(0, 8),
       research: {
         deepResearchLimit: PROFILE.deepResearchLimit,
@@ -660,6 +811,8 @@
     parseKapDirectoryHtml,
     parseKapMemberId,
     parseKapDisclosuresHtml,
+    parseKapDisclosureFeed,
+    kapRiskFromFeed,
     tickSizeForPrice,
     roundToTick,
     businessDaysAge,
@@ -668,7 +821,9 @@
     fetchUniverse,
     fetchHistory,
     fetchKapDirectory,
+    fetchKapDisclosureFeed,
     fetchKapRisk,
+    selectBistUniverse,
     buildRecommendation,
     finalizeRecommendation,
     scanSymbols,

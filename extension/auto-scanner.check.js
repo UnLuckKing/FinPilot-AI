@@ -56,11 +56,29 @@ assert.equal(scanner.businessDaysAge("2026-07-17", new Date("2026-07-20T12:00:00
 const kapDirectory = scanner.parseKapDirectoryHtml('<a href="/tr/sirket-bilgileri/ozet/1107-turk-hava-yollari-a-o">THYAO</a>');
 assert.match(kapDirectory.get("THYAO").url, /1107-turk-hava-yollari/);
 assert.equal(scanner.parseKapMemberId('<a href="/tr/bildirim-sorgu-sonuc?member=4028e4a140f2ed720140f376bebb01a7">Bildirimler</a>'), "4028e4a140f2ed720140f376bebb01a7");
+assert.equal(scanner.parseKapMemberId('<a href="/tr/sirket-bilgileri/genel/4028e4a140f2ed720140f376bebb01a7">THYAO</a>'), "4028e4a140f2ed720140f376bebb01a7");
 const kapSafe = scanner.parseKapDisclosuresHtml('<table><tr><td>15.07.2026</td><td>THYAO</td><td>Haziran trafik sonuçları</td></tr></table>', "THYAO", new Date("2026-07-16T12:00:00Z"));
 assert.equal(kapSafe.available, true);
 assert.equal(kapSafe.blocked, false);
 const kapBlocked = scanner.parseKapDisclosuresHtml('<table><tr><td>15.07.2026</td><td>THYAO</td><td>Pay bazında devre kesici bildirimi</td></tr></table>', "THYAO", new Date("2026-07-16T12:00:00Z"));
 assert.equal(kapBlocked.blocked, true);
+
+const kapFeed = scanner.parseKapDisclosureFeed([
+  { basic: { disclosureIndex: 10, publishDate: "16.07.2026 09:30", stockCodes: [{ stockCode: "THYAO" }], companyName: "Türk Hava Yolları", title: "Haziran trafik sonuçları" } },
+  { basic: { disclosureIndex: 9, publishDate: "15.07.2026 18:00", stockCodes: ["ASELS"], companyName: "Aselsan", title: "Pay bazında devre kesici bildirimi" } },
+], new Date("2026-07-16T12:00:00Z"));
+assert.equal(kapFeed.available, true);
+assert.equal(kapFeed.bySymbol.get("THYAO").length, 1);
+assert.equal(scanner.kapRiskFromFeed(kapFeed, "THYAO", new Date("2026-07-16T12:00:00Z")).blocked, false);
+assert.equal(scanner.kapRiskFromFeed(kapFeed, "ASELS", new Date("2026-07-16T12:00:00Z")).blocked, true);
+
+const broadFundamentals = new Map(Array.from({ length: 40 }, (_, index) => {
+  const symbol = `A${String(index).padStart(3, "0")}`;
+  return [symbol, { marketCapTryM: 10_000 + index * 1_000, freeFloatPct: 20 + index % 10 }];
+}));
+const selectedUniverse = scanner.selectBistUniverse(broadFundamentals, ["A000"], 30);
+assert.equal(selectedUniverse.length, 30);
+assert.equal(selectedUniverse[0], "A000");
 
 const gateFixture = { preEligible: true, reasons: [], gates: {}, links: {} };
 assert.equal(scanner.finalizeRecommendation(gateFixture, { available: true, blocked: false, status: "Temiz" }, true, true).action, "YATIR");
@@ -83,6 +101,8 @@ const mockFetch = async (url) => {
   assert.equal(result.scannedCount, 2);
   assert.equal(result.errorCount, 0);
   assert.equal(result.recommendations.length, 2);
+  assert.equal(result.recommendations[0].market, "bist");
+  assert.equal(result.snapshot.length, 2);
   assert.equal(result.marketRegime.gateOpen, true);
   assert.ok(requestedUrls.every((url) => !url.endsWith(".json")));
   assert.ok(requestedUrls.some((url) => url.includes("HisseTekil?hisse=THYAO&startdate=")));

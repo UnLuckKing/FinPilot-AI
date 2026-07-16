@@ -482,15 +482,20 @@
     const features = featureMatrix(rows, settings);
     const backtestResult = backtest(rows, features, settings);
     const model = trainLocalModel(rows, features, settings);
-    const forecasts = [1, 5, 20].map((horizon) => analogForecast(rows, features, horizon, settings));
-    const fiveDayForecast = forecasts.find((forecast) => forecast.horizon === 5);
+    const forecastHorizons = Array.isArray(settings.forecastHorizons)
+      ? [...new Set(settings.forecastHorizons.map((value) => Math.max(1, Math.floor(finite(value)))).filter(Number.isFinite))].slice(0, 4)
+      : [1, 5, 20];
+    const safeHorizons = forecastHorizons.length ? forecastHorizons : [1, 5, 20];
+    const primaryHorizon = Math.max(1, Math.floor(finite(settings.primaryHorizon, safeHorizons.includes(5) ? 5 : safeHorizons[Math.min(1, safeHorizons.length - 1)])));
+    const forecasts = safeHorizons.map((horizon) => analogForecast(rows, features, horizon, settings));
+    const primaryForecast = forecasts.find((forecast) => forecast.horizon === primaryHorizon) || forecasts[0];
     const latest = features[features.length - 1];
     const minimumTrades = finite(settings.minimumTrades, 30);
     const backtestReady = backtestResult.totalTrades >= minimumTrades;
     let blendedProbability = model.available && backtestReady
       ? backtestResult.smoothedWinProbability * 0.62 + (latest.trend >= 0 ? model.probabilityUp : model.probabilityDown) * 0.38
       : backtestReady ? backtestResult.smoothedWinProbability : model.available ? (latest.trend >= 0 ? model.probabilityUp : model.probabilityDown) : 50;
-    if (fiveDayForecast?.available) blendedProbability = blendedProbability * 0.68 + fiveDayForecast.probabilityUp * 0.32;
+    if (primaryForecast?.available) blendedProbability = blendedProbability * 0.68 + primaryForecast.probabilityUp * 0.32;
     const positiveEdge = backtestReady && backtestResult.profitFactor >= 1.15 && backtestResult.expectancyR > 0;
     const longCandidate = latest.trend > 0 && latest.scoreLong >= finite(settings.threshold, 62);
     const shortCandidate = Boolean(settings.allowShort) && latest.trend < 0 && latest.scoreShort >= finite(settings.threshold, 62);
@@ -505,7 +510,7 @@
       { name: "Hacim Ajanı", status: latest.volumeRatio >= 1 ? "Destekli" : "Zayıf", score: clamp(latest.volumeRatio * 55, 0, 100), detail: `Hacim, 20 mum ortalamasının ${latest.volumeRatio.toFixed(2)} katı.` },
       { name: "Backtest Denetçisi", status: positiveEdge ? "Geçti" : "Reddetti", score: clamp(backtestResult.profitFactor * 45, 0, 100), detail: `${backtestResult.totalTrades} işlem, PF ${Number.isFinite(backtestResult.profitFactor) ? backtestResult.profitFactor.toFixed(2) : "∞"}, beklenti ${backtestResult.expectancyR.toFixed(2)}R.` },
       { name: "ML Ajanı", status: model.available ? model.quality : "Veri yetersiz", score: model.available ? clamp(model.outOfSampleAccuracy, 0, 100) : 0, detail: model.available ? `Test doğruluğu %${model.outOfSampleAccuracy.toFixed(1)}, Brier ${model.brierScore.toFixed(3)}.` : model.reason },
-      { name: "Yön Ajanı", status: fiveDayForecast?.available ? fiveDayForecast.direction : "Veri yetersiz", score: fiveDayForecast?.available ? fiveDayForecast.probabilityUp : 0, detail: fiveDayForecast?.available ? `5 gün: yükseliş %${fiveDayForecast.probabilityUp.toFixed(1)}, düşüş %${fiveDayForecast.probabilityDown.toFixed(1)}, yatay %${fiveDayForecast.probabilityFlat.toFixed(1)}.` : fiveDayForecast?.reason },
+      { name: "Yön Ajanı", status: primaryForecast?.available ? primaryForecast.direction : "Veri yetersiz", score: primaryForecast?.available ? primaryForecast.probabilityUp : 0, detail: primaryForecast?.available ? `${settings.primaryHorizonLabel || `${primaryHorizon} bar`}: yükseliş %${primaryForecast.probabilityUp.toFixed(1)}, düşüş %${primaryForecast.probabilityDown.toFixed(1)}, yatay %${primaryForecast.probabilityFlat.toFixed(1)}.` : primaryForecast?.reason },
       { name: "Stres Denetçisi", status: backtestResult.stress.available ? (backtestResult.stress.profitablePct >= 60 ? "Geçti" : "Zayıf") : "Veri yetersiz", score: backtestResult.stress.available ? backtestResult.stress.profitablePct : 0, detail: backtestResult.stress.available ? `${backtestResult.stress.iterations} Monte Carlo yolu; pozitif kapanış %${backtestResult.stress.profitablePct.toFixed(1)}, kötü %10 net ${backtestResult.stress.p10NetR.toFixed(2)}R.` : backtestResult.stress.reason },
     ];
     return {
@@ -513,6 +518,7 @@
       backtest: backtestResult,
       model,
       forecasts,
+      primaryHorizon,
       agents,
       decision,
       setupScore: Math.max(latest.scoreLong, latest.scoreShort),

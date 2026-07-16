@@ -1,5 +1,5 @@
 //@version=6
-indicator("FinPilot Watchlist Scanner v1.2", shorttitle = "FinPilot Scanner", overlay = false, max_bars_back = 500)
+indicator("FinPilot Watchlist Scanner v2.0", shorttitle = "FinPilot Scanner", overlay = false, max_bars_back = 500)
 
 // TradingView Pine Screener icin aday bulma gostergesi.
 // Kararlar yalnizca kapanmis mumda olusur; sonuc veya kazanc garantisi vermez.

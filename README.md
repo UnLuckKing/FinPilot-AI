@@ -1,4 +1,4 @@
-# FinPilot AI v1.2
+# FinPilot AI v2.0
 
 FinPilot AI; portföy takibi, yatırım bütçesi, varlık dağılımı, risk görünümü, hedefler ve açıklanabilir finansal analiz sunan Türkçe bir karar destek uygulamasıdır.
 
@@ -53,21 +53,21 @@ npm start
 - PWA manifesti ve üretim ortamında service worker kaydı
 - Supabase/PostgreSQL şeması, kontroller ve kullanıcı bazlı RLS politikaları
 
-## TradingView üzerinde otomatik araştırma paneli
+## TradingView üzerinde çoklu piyasa araştırma paneli
 
-`extension` klasörü, TradingView açıkken tek düğmeyle BIST araştırması yapan ücretsiz Chrome yan panelidir. Sembol, fiyat, CSV veya emir girişi istemez; aracı kuruma bağlanmaz ve gerçek emir göndermez.
+`extension` klasörü, TradingView yanında çalışan ücretsiz Chrome yan panelidir. Geniş bir BIST havuzunu ve Binance'teki likit USDT spot çiftlerini kendi tarar. Sembol, fiyat, CSV veya emir girişi istemez; aracı kuruma ya da borsa hesabına bağlanmaz ve gerçek emir göndermez.
 
-- İş Yatırım'ın halka açık tarihsel fiyat ve temel oran sayfalarını kullanır.
-- 1, 5 ve 20 işlem günü için yükseliş, düşüş ve yatay olasılıkları ile beklenen aralığı gösterir.
-- Trend, momentum, hacim, sektör içi temel analiz, masraflı backtest ve kronolojik yerel model kullanır.
-- Yakın dönem rejimi ve 250 senaryolu Monte Carlo stres kapısı uygular.
-- KAP'taki son bildirimlerde tanımlı risk işaretlerini araştırır; KAP doğrulanamazsa `YATIR` üretmez.
-- Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar.
-- Borsa İstanbul fiyat adımlarına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef verir.
-- Veri yaşı, `%95` aralık, kâr faktörü, beklenen değer ve her kapının geçti/kaldı durumunu açıklar.
-- Yeni `YATIR` sonucu oluştuğunda yerel Chrome bildirimi gösterir.
-- Chrome açıkken yaklaşık 12 saatte bir yenilenir; tek manuel kontrol **ŞİMDİ OTOMATİK ARAŞTIR** düğmesidir.
-- İsteğe bağlı Pine Script v6 stratejisi ve Pine Screener göstergesi içerir. Pine, KAP okuyamadığı için yalnızca “ön aday” gösterir; nihai karar Chrome panelindedir.
+- İş Yatırım temel tablosundan fiili dolaşım piyasa değerine göre en fazla 120 likit BIST hissesi seçer; veri kaynağı bozulursa 30 hisselik yedek havuza geçer.
+- Binance'in anahtarsız herkese açık piyasa verisinden en fazla 140 likit USDT spot çifti seçer; stablecoin ve `UP/DOWN/BULL/BEAR` kaldıraçlı tokenları dışlar.
+- BIST için 1, 5 ve 20 işlem günü; kripto için 4 saat, 1 gün ve 7 gün yükseliş/düşüş/yatay olasılığı ile beklenen aralık gösterir.
+- Trend, momentum, hacim, masraflı backtest, yakın dönem rejimi, kronolojik yerel model ve 250 senaryolu Monte Carlo stres testi uygular.
+- BIST'te temel değerleme ve güncel KAP akışı; kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı zorunlu kapılardır.
+- Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar; kartın üstünde geçmeyen kapıları doğrudan listeler ve “YATIR'a en yakın” sonuçları işaretler.
+- Pazarın fiyat adımına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef yalnızca geçerli `YATIR` sinyalinde etkinleşir.
+- `Tümü`, `BIST`, `Kripto` ve `Geçmiş` sekmeleri vardır. Geçmiş, üretilen sinyalleri sonraki kapanmış tarama fiyatlarıyla izler; gerçek aracı kurum performansı değildir.
+- Bir piyasa kaynağı hata verse bile diğer piyasanın taraması devam eder. Eksik veya eski veriden olumlu sinyal üretilmez.
+- Yeni `YATIR` sonucu oluştuğunda yerel Chrome bildirimi gösterir ve Chrome açıkken yaklaşık 4 saatte bir yenilenir.
+- İsteğe bağlı Pine Script v6 araçları yalnızca grafik teyidi içindir; TradingView'in fiyat/indikatör verisi için halka açık bir API'si olmadığından panel veriyi TradingView'den çekmez.
 
 Kurulum için [TRADINGVIEW-KURULUM.md](TRADINGVIEW-KURULUM.md) dosyasını izleyin veya Windows'ta `TRADINGVIEW-KURULUMUNU-AC.bat` dosyasını çalıştırın.
 

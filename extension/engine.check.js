@@ -29,6 +29,11 @@ for (const forecast of analysis.forecasts) {
 assert.ok(analysis.backtest.stress.available);
 assert.ok(analysis.backtest.stress.profitablePct >= 0 && analysis.backtest.stress.profitablePct <= 100);
 
+const cryptoAnalysis = engine.analyze(rows, { threshold: 56, minimumTrades: 5, rewardRisk: 1.5, forecastHorizons: [1, 6, 42], primaryHorizon: 6, primaryHorizonLabel: "1 gün" });
+assert.deepEqual(cryptoAnalysis.forecasts.map((forecast) => forecast.horizon), [1, 6, 42]);
+assert.equal(cryptoAnalysis.primaryHorizon, 6);
+assert.ok(cryptoAnalysis.agents.some((agent) => agent.name === "Yön Ajanı" && agent.detail.includes("1 gün")));
+
 const plan = engine.riskPlan({ capital: 100000, price: 100, atr: 2, riskPct: 0.5, lossStreak: 2 });
 assert.equal(plan.adjustedRiskPct, 0.25);
 assert.ok(plan.stop < plan.entry);
