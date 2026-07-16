@@ -2,7 +2,13 @@ importScripts("engine.js", "auto-scanner.js");
 
 const SCAN_KEY = "finpilotAutomaticScan";
 const ALARM_NAME = "finpilot-bist-auto-scan";
+const RESULT_VERSION = 3;
 let scanPromise = null;
+
+function resultNeedsRefresh(result) {
+  const age = Date.now() - Date.parse(result?.generatedAt || 0);
+  return result?.version !== RESULT_VERSION || !Number.isFinite(age) || age > 12 * 60 * 60 * 1000;
+}
 
 async function notifyDecisionChange(previous, current) {
   if (!chrome.notifications?.create) return;
@@ -49,8 +55,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   ensureAlarm().catch(() => undefined);
   chrome.storage.local.get(SCAN_KEY).then((stored) => {
-    const age = Date.now() - Date.parse(stored[SCAN_KEY]?.generatedAt || 0);
-    if (!Number.isFinite(age) || age > 12 * 60 * 60 * 1000) runAutomaticScan().catch(() => undefined);
+    if (resultNeedsRefresh(stored[SCAN_KEY])) runAutomaticScan().catch(() => undefined);
   });
 });
 
@@ -66,8 +71,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "GET_AUTOMATIC_SCAN") {
     chrome.storage.local.get(SCAN_KEY).then(async (stored) => {
       const cached = stored[SCAN_KEY] || null;
-      const age = Date.now() - Date.parse(cached?.generatedAt || 0);
-      const result = !cached || !Number.isFinite(age) || age > 12 * 60 * 60 * 1000 ? await runAutomaticScan() : cached;
+      const result = resultNeedsRefresh(cached) ? await runAutomaticScan() : cached;
       sendResponse({ ok: true, result });
     }).catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;

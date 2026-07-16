@@ -61,7 +61,7 @@ function forecastCard(forecast, label) {
 
 function recommendationCard(item, index) {
   const actionClass = item.eligible ? "candidate" : "blocked";
-  const profitFactor = Number.isFinite(item.profitFactor) ? fmt(item.profitFactor, 2) : "∞";
+  const profitFactor = item.profitFactor == null ? "—" : Number.isFinite(item.profitFactor) ? fmt(item.profitFactor, 2) : "∞";
   const probabilityRange = item.probabilityLow == null ? "Örneklem az" : `%${fmt(item.probabilityLow, 0)}–${fmt(item.probabilityHigh, 0)}`;
   const fundamentalScore = item.fundamental?.available ? `${Math.round(item.fundamental.score)}/100` : "—";
   const stressScore = item.stress?.available ? percent(item.stress.profitablePct, 0) : "—";
@@ -69,15 +69,16 @@ function recommendationCard(item, index) {
   const order = item.orderPlan || item.levels || {};
   const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
   const gates = Object.entries(item.gates || {}).map(([name, passed]) => `<span class="gate ${passed ? "pass" : "fail"}">${passed ? "✓" : "×"} ${escapeHtml(gateNames[name] || name)}</span>`).join("");
-  const reasons = item.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+  const reasons = (Array.isArray(item.reasons) ? item.reasons : ["Araştırma gerekçesi mevcut değil."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+  const orderSection = item.eligible ? `<div class="order-title"><span>ÖNERİLEN EMİR PLANI</span><b>Sinyal geçerli</b></div>
+    <div class="levels order-levels"><div class="entry"><span>Alış limiti</span><b>₺${fmt(order.limitBuy, 2)}</b></div><div class="stop"><span>Stop tetik</span><b>₺${fmt(order.stopTrigger, 2)}</b></div><div class="stop"><span>Stop-limit</span><b>₺${fmt(order.stopLimit, 2)}</b></div><div class="target"><span>Hedef 1</span><b>₺${fmt(order.target1, 2)}</b></div><div class="target"><span>Hedef 2</span><b>₺${fmt(order.target2, 2)}</b></div><div><span>Geçerlilik</span><b>${escapeHtml(order.validUntil || "Yeni veri gelene kadar")}</b></div></div>` : `<div class="inactive-order"><b>YATIRMA</b><span>Emir seviyesi aktif değil; geçmeyen kapıları aşağıdan incele.</span></div>`;
   return `<article class="stock-card ${item.eligible ? "candidate" : ""}">
     <div class="stock-head"><span class="rank">${index + 1}</span><div class="stock-name"><b>${escapeHtml(item.symbol)}</b><span>₺${fmt(item.price, 2)} · veri ${escapeHtml(item.dataDate)} · ${item.dataAgeBusinessDays ?? "—"} iş günü</span></div><span class="action ${actionClass}">${escapeHtml(item.action)}</span></div>
     <div class="score-row"><span>Birleşik güç</span><div class="score-bar"><i style="width:${Math.round(item.rankScore)}%"></i></div><b>${Math.round(item.rankScore)}</b></div>
     <div class="direction-title"><span>YÖN ARAŞTIRMASI</span><b>${escapeHtml(item.direction || "BELİRSİZ")}</b></div>
     <div class="forecast-grid">${forecastCard(item.forecasts?.["1"], "1 GÜN")}${forecastCard(item.forecasts?.["5"], "5 GÜN")}${forecastCard(item.forecasts?.["20"], "20 GÜN")}</div>
     <div class="stock-metrics"><div><span>Geçmiş kazanma</span><b>${percent(item.historicalProbability)}</b></div><div><span>%95 aralık</span><b>${probabilityRange}</b></div><div><span>Kâr faktörü</span><b>${profitFactor}</b></div><div><span>Yakın beklenti</span><b>${fmt(item.recentExpectancyR, 2)}R</b></div><div><span>ML yükseliş</span><b>${percent(item.modelProbabilityUp)}</b></div><div><span>Stres pozitif</span><b>${stressScore}</b></div><div><span>Temel puan</span><b>${fundamentalScore}</b></div><div><span>KAP</span><b>${escapeHtml(kapStatus)}</b></div></div>
-    <div class="order-title"><span>ÖNERİLEN EMİR PLANI</span><b>${item.eligible ? "Sinyal geçerli" : "Emir oluşturma"}</b></div>
-    <div class="levels order-levels"><div class="entry"><span>Alış limiti</span><b>₺${fmt(order.limitBuy, 2)}</b></div><div class="stop"><span>Stop tetik</span><b>₺${fmt(order.stopTrigger, 2)}</b></div><div class="stop"><span>Stop-limit</span><b>₺${fmt(order.stopLimit, 2)}</b></div><div class="target"><span>Hedef 1</span><b>₺${fmt(order.target1, 2)}</b></div><div class="target"><span>Hedef 2</span><b>₺${fmt(order.target2, 2)}</b></div><div><span>Geçerlilik</span><b>${escapeHtml(order.validUntil || "Yeni veri gelene kadar")}</b></div></div>
+    ${orderSection}
     <div class="gate-list">${gates}</div>
     <p class="stop-warning">⚠ Stop-limit fiyat boşluğunda gerçekleşmeyebilir. Seviye öneridir; otomatik emir gönderilmez.</p>
     <details class="research-details"><summary>Araştırma gerekçelerini göster</summary><ul class="reasons">${reasons}</ul></details>

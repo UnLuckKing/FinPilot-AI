@@ -130,6 +130,9 @@ footer a{color:#647c70;text-decoration:none}
 .stock-metrics div:nth-last-child(-n+3){border-bottom:1px solid var(--line)}
 .stock-metrics div:nth-last-child(-n+4){border-bottom:0}
 .order-levels{grid-template-columns:repeat(3,1fr)}
+.inactive-order{margin:4px 13px 11px;padding:10px;border:1px solid #63303a;border-radius:9px;background:#2a141a;display:flex;align-items:center;gap:9px}
+.inactive-order b{color:var(--red);font-size:8px}
+.inactive-order span{color:#b28b93;font-size:7px;line-height:1.4}
 .levels .entry b{color:var(--lime)}
 .gate-list{display:flex;flex-wrap:wrap;gap:5px;padding:3px 13px 11px}
 .gate{padding:4px 6px;border-radius:99px;border:1px solid var(--line);font-size:6px}

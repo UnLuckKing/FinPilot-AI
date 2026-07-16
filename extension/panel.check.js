@@ -22,6 +22,7 @@ const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
 global.document = { getElementById: (id) => elements[id] };
 
 const cached = {
+  version: 3,
   generatedAt: "2026-07-16T09:00:00.000Z",
   dataAsOf: "2026-07-15",
   universe: "FinPilot likit BIST havuzu",
@@ -44,6 +45,13 @@ const cached = {
     links: { tradingView: "https://tr.tradingview.com/chart/?symbol=BIST%3ATHYAO", isYatirim: "https://www.isyatirim.com.tr/", kap: "https://kap.org.tr/tr/bildirim-sorgu" },
   }],
 };
+cached.recommendations.push({
+  ...cached.recommendations[0],
+  symbol: "ASELS",
+  action: "YATIRMA",
+  eligible: false,
+  gates: { ...cached.recommendations[0].gates, kap: false },
+});
 
 global.chrome = {
   runtime: {
@@ -67,6 +75,7 @@ setTimeout(() => {
     assert.match(elements.recommendations.innerHTML, /Temel puan/);
     assert.match(elements.recommendations.innerHTML, /Alış limiti/);
     assert.match(elements.recommendations.innerHTML, /Stop-limit/);
+    assert.match(elements.recommendations.innerHTML, /Emir seviyesi aktif değil/);
     assert.match(elements.recommendations.innerHTML, /YÜKSELİŞ/);
     assert.equal(elements.kapCheckedCount.textContent, "1/6");
     assert.equal(elements.runScan.disabled, false);
