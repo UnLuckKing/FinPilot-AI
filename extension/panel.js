@@ -86,16 +86,17 @@ function metricCells(item) {
 }
 
 function recommendationCard(item, index) {
-  const actionClass = item.eligible ? "candidate" : "blocked";
+  const actionClass = item.eligible ? "candidate" : item.nearMiss ? "watch" : "blocked";
   const order = item.orderPlan || item.levels || {};
-  const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: item.market === "crypto" ? "BTC/piyasa" : "Piyasa" };
+  const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: item.market === "crypto" ? "BTC/piyasa" : "Piyasa", performance: "Performans" };
   const gates = Object.entries(item.gates || {}).map(([name, passed]) => `<span class="gate ${passed ? "pass" : "fail"}">${passed ? "✓" : "×"} ${escapeHtml(gateNames[name] || name)}</span>`).join("");
-  const failedLabels = (item.failedGates || Object.entries(item.gates || {}).filter(([, passed]) => !passed).map(([key]) => ({ label: gateNames[key] || key }))).map((gate) => gate.label);
+  const failedItems = item.failedGates || Object.entries(item.gates || {}).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateNames[key] || key }));
+  const failedMessages = failedItems.map((gate) => gate.message || item.gateDiagnostics?.[gate.key]?.message || gate.label).filter(Boolean);
   const failedBanner = item.eligible
-    ? '<div class="gate-summary passed"><b>TÜM KAPILAR GEÇTİ</b><span>Limit ve stop planı etkin.</span></div>'
-    : `<div class="gate-summary failed"><b>${item.nearMiss ? "YATIR'A EN YAKIN" : "NEDEN YATIRMA?"}</b><span>${escapeHtml(failedLabels.length ? failedLabels.join(" · ") : "Güvenlik koşulları tamamlanmadı")}</span></div>`;
+    ? `<div class="gate-summary passed"><b>TÜM KAPILAR GEÇTİ</b><span>${escapeHtml(order.label || "Limit ve stop planı")} etkin.</span></div>`
+    : `<div class="gate-summary failed"><b>${item.nearMiss ? `YATIR'A ${item.distanceToEligible || failedItems.length} KAPI KALDI` : "NEDEN YATIRMA?"}</b><span>${escapeHtml(failedMessages.length ? failedMessages.slice(0, 3).join(" | ") : "Güvenlik koşulları tamamlanmadı")}</span></div>`;
   const reasons = (Array.isArray(item.reasons) ? item.reasons : ["Araştırma gerekçesi mevcut değil."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
-  const orderSection = item.eligible ? `<div class="order-title"><span>ÖNERİLEN EMİR PLANI</span><b>Sinyal geçerli</b></div>
+  const orderSection = item.eligible ? `<div class="order-title"><span>${escapeHtml(order.label || "ÖNERİLEN EMİR PLANI")}</span><b>${order.validPlanCount || 1}/3 plan geçerli</b></div>
     <div class="levels order-levels"><div class="entry"><span>Alış limiti</span><b>${formatPrice(item, order.limitBuy)}</b></div><div class="stop"><span>Stop tetik</span><b>${formatPrice(item, order.stopTrigger)}</b></div><div class="stop"><span>Stop-limit</span><b>${formatPrice(item, order.stopLimit)}</b></div><div class="target"><span>Hedef 1</span><b>${formatPrice(item, order.target1)}</b></div><div class="target"><span>Hedef 2</span><b>${formatPrice(item, order.target2)}</b></div><div><span>Geçerlilik</span><b>${escapeHtml(order.validUntil || "Yeni veri gelene kadar")}</b></div></div>` : `<div class="inactive-order"><b>YATIRMA</b><span>Emir seviyesi etkin değil; eksik kapılar yukarıda açıkça gösteriliyor.</span></div>`;
   const age = item.market === "crypto" ? `${fmt(item.dataAgeHours, 1)} saat` : `${item.dataAgeBusinessDays ?? "—"} iş günü`;
   const forecastDisplay = item.forecastDisplay || [{ key: "1", label: "1 GÜN" }, { key: "5", label: "5 GÜN" }, { key: "20", label: "20 GÜN" }];
@@ -107,10 +108,13 @@ function recommendationCard(item, index) {
     item.market !== "crypto" && item.links?.isYatirim ? `<a href="${escapeHtml(item.links.isYatirim)}" target="_blank" rel="noreferrer">İş Yatırım ↗</a>` : "",
     item.market !== "crypto" && item.links?.kap ? `<a href="${escapeHtml(item.links.kap)}" target="_blank" rel="noreferrer">KAP ↗</a>` : "",
   ].filter(Boolean).join("");
-  return `<article class="stock-card ${item.eligible ? "candidate" : ""}">
+  const watchFlag = item.autoWatched ? `<div class="watch-flag">◎ Otomatik takipte · sonraki taramada kapı mesafesi yeniden ölçülecek</div>` : "";
+  return `<article class="stock-card ${item.eligible ? "candidate" : ""} ${item.autoWatched ? "watched" : ""}">
     <div class="stock-head"><span class="rank">${index + 1}</span><div class="stock-name"><div><b>${escapeHtml(item.displaySymbol || item.symbol)}</b><em class="market-badge ${marketClass}">${escapeHtml(item.marketLabel || marketClass.toUpperCase())}</em></div><span>${formatPrice(item, item.price)} · veri ${escapeHtml(item.dataDate)} · ${age}</span></div><span class="action ${actionClass}">${escapeHtml(item.action)}</span></div>
     <div class="score-row"><span>Birleşik güç</span><div class="score-bar"><i style="width:${Math.max(0, Math.min(100, Math.round(item.rankScore || 0)))}%"></i></div><b>${Math.round(item.rankScore || 0)}</b></div>
+    ${watchFlag}
     ${failedBanner}
+    <div class="strategy-line"><span>SEÇİLEN STRATEJİ</span><b>${escapeHtml(item.strategy?.label || "Trend devamı")}</b><em>${item.strategy?.comparisons?.length || 1} model karşılaştırıldı</em></div>
     <div class="direction-title"><span>YÖN ARAŞTIRMASI</span><b>${escapeHtml(item.direction || "BELİRSİZ")}</b></div>
     <div class="forecast-grid">${forecasts}</div>
     <div class="stock-metrics">${metricCells(item)}</div>
@@ -135,7 +139,7 @@ function renderHistory(history) {
 }
 
 function legacyToCombined(result) {
-  if (result?.version === 4 && result.markets) return result;
+  if (result?.version >= 4 && result.markets) return result;
   const bist = { ...result, market: "bist", recommendations: (result?.recommendations || []).map((item) => ({ market: "bist", marketLabel: "BIST", displaySymbol: item.symbol, priceDecimals: 2, ...item })), snapshot: result?.snapshot || [] };
   const crypto = { market: "crypto", scannedCount: 0, requestedCount: 0, candidateCount: 0, errorCount: 0, recommendations: [], snapshot: [], errors: [], marketDecision: "Kripto henüz taranmadı", marketRegime: { gateOpen: false, dataSufficient: false, breadthPct: 0 } };
   if (typeof FinPilotMarketAggregator !== "undefined") {
@@ -148,7 +152,7 @@ function legacyToCombined(result) {
 
 function renderActiveTab() {
   if (!currentResult) return;
-  const tabMap = { all: "tabAll", bist: "tabBist", crypto: "tabCrypto", history: "tabHistory" };
+  const tabMap = { all: "tabAll", bist: "tabBist", crypto: "tabCrypto", watch: "tabWatch", history: "tabHistory" };
   for (const [tab, id] of Object.entries(tabMap)) $(id).classList.toggle("active", activeTab === tab);
   const isHistory = activeTab === "history";
   $("recommendations").hidden = isHistory;
@@ -159,10 +163,10 @@ function renderActiveTab() {
     $("historyPanel").innerHTML = renderHistory(currentResult.signalHistory);
     return;
   }
-  const filtered = (currentResult.recommendations || []).filter((item) => activeTab === "all" || item.market === activeTab);
-  $("recommendationTitle").textContent = activeTab === "bist" ? "En güçlü BIST hisseleri" : activeTab === "crypto" ? "En güçlü spot kriptolar" : "En güçlü varlıklar";
-  $("universeLabel").textContent = activeTab === "bist" ? currentResult.markets?.bist?.universe || "Geniş BIST" : activeTab === "crypto" ? currentResult.markets?.crypto?.universe || "Binance USDT spot" : currentResult.universe;
-  $("recommendations").innerHTML = filtered.map(recommendationCard).join("") || '<div class="empty-card"><h2>Bu piyasada sonuç yok</h2><p>Veri uyarılarını inceleyip daha sonra yeniden tara.</p></div>';
+  const filtered = (currentResult.recommendations || []).filter((item) => activeTab === "all" || activeTab === "watch" ? (activeTab === "all" || item.autoWatched || item.nearMiss) : item.market === activeTab);
+  $("recommendationTitle").textContent = activeTab === "bist" ? "En güçlü BIST hisseleri" : activeTab === "crypto" ? "En güçlü spot kriptolar" : activeTab === "watch" ? "Otomatik yakın takip" : "En güçlü varlıklar";
+  $("universeLabel").textContent = activeTab === "bist" ? currentResult.markets?.bist?.universe || "Geniş BIST" : activeTab === "crypto" ? currentResult.markets?.crypto?.universe || "Binance USDT spot" : activeTab === "watch" ? currentResult.nearWatch?.note || "Her taramada kapı mesafesi ölçülür" : currentResult.universe;
+  $("recommendations").innerHTML = filtered.map(recommendationCard).join("") || `<div class="empty-card"><h2>${activeTab === "watch" ? "Yakın takipte varlık yok" : "Bu piyasada sonuç yok"}</h2><p>${activeTab === "watch" ? "Bir varlık en fazla üç kapı uzakta olduğunda otomatik olarak buraya eklenir." : "Veri uyarılarını inceleyip daha sonra yeniden tara."}</p></div>`;
 }
 
 function selectTab(tab) {
@@ -193,6 +197,7 @@ function render(input) {
   $("allCount").textContent = (result.recommendations || []).length;
   $("bistCount").textContent = bistCount;
   $("cryptoCount").textContent = cryptoCount;
+  $("watchCount").textContent = result.nearWatch?.count ?? (result.recommendations || []).filter((item) => item.autoWatched || item.nearMiss).length;
   $("historyCount").textContent = result.signalHistory?.records?.length || 0;
   $("errorDetails").hidden = !result.errorCount;
   $("errorCount").textContent = result.errorCount;
@@ -208,14 +213,18 @@ async function fallbackScan() {
     FinPilotCryptoScanner.runScan({ onProgress: progress }),
   ]);
   const empty = (market, outcome) => ({ market, scannedCount: 0, requestedCount: 0, candidateCount: 0, errorCount: 1, recommendations: [], snapshot: [], errors: [{ symbol: market.toUpperCase(), message: outcome.reason?.message || String(outcome.reason) }], marketRegime: { gateOpen: false, dataSufficient: false, breadthPct: 0 } });
-  const bist = bistOutcome.status === "fulfilled" ? bistOutcome.value : empty("bist", bistOutcome);
-  const crypto = cryptoOutcome.status === "fulfilled" ? cryptoOutcome.value : empty("crypto", cryptoOutcome);
+  const stored = await chrome.storage.local.get(["finpilotSignalHistory", "finpilotNearWatch"]);
+  const bistRaw = bistOutcome.status === "fulfilled" ? bistOutcome.value : empty("bist", bistOutcome);
+  const cryptoRaw = cryptoOutcome.status === "fulfilled" ? cryptoOutcome.value : empty("crypto", cryptoOutcome);
+  const bist = FinPilotSignalTracker.applyPerformanceGuard(bistRaw, stored.finpilotSignalHistory || null);
+  const crypto = FinPilotSignalTracker.applyPerformanceGuard(cryptoRaw, stored.finpilotSignalHistory || null);
   const result = FinPilotMarketAggregator.combineResults(bist, crypto, new Date());
-  const stored = await chrome.storage.local.get("finpilotSignalHistory");
   const history = FinPilotSignalTracker.updateHistory(stored.finpilotSignalHistory || null, result, new Date());
-  result.signalHistory = history;
-  await chrome.storage.local.set({ finpilotAutomaticScan: result, finpilotSignalHistory: history });
-  return result;
+  const watch = FinPilotNearWatch.updateWatch(stored.finpilotNearWatch || null, result, new Date());
+  const watchedResult = FinPilotNearWatch.attachToResult(result, watch);
+  watchedResult.signalHistory = history;
+  await chrome.storage.local.set({ finpilotAutomaticScan: watchedResult, finpilotSignalHistory: history, finpilotNearWatch: watch });
+  return watchedResult;
 }
 
 async function runScan() {
@@ -240,6 +249,7 @@ async function init() {
   $("tabAll").addEventListener("click", () => selectTab("all"));
   $("tabBist").addEventListener("click", () => selectTab("bist"));
   $("tabCrypto").addEventListener("click", () => selectTab("crypto"));
+  $("tabWatch").addEventListener("click", () => selectTab("watch"));
   $("tabHistory").addEventListener("click", () => selectTab("history"));
   showProgress(true);
   setStatus("Kontrol ediliyor");

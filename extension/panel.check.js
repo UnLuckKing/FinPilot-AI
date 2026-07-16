@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 require("./market-aggregator.js");
+require("./near-watch.js");
 
 class FakeElement {
   constructor() {
@@ -19,7 +20,7 @@ const ids = [
   "pageStatus", "activeChart", "progressCard", "runScan", "progressTitle", "progressText", "progressFill",
   "emptyState", "resultArea", "marketDecision", "marketMeta", "candidateCount", "marketDecisionCard",
   "scannedCount", "bistScanned", "cryptoScanned", "marketBreadth", "dataAsOf", "generatedAt", "kapCheckedCount",
-  "tabAll", "tabBist", "tabCrypto", "tabHistory", "allCount", "bistCount", "cryptoCount", "historyCount",
+  "tabAll", "tabBist", "tabCrypto", "tabWatch", "tabHistory", "allCount", "bistCount", "cryptoCount", "watchCount", "historyCount",
   "recommendationTitle", "universeLabel", "recommendations", "historyPanel", "errorDetails", "errorCount", "errorList",
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
@@ -39,12 +40,13 @@ const cryptoItem = {
   market: "crypto", marketLabel: "KRİPTO", displaySymbol: "BTC", symbol: "BTCUSDT", priceDecimals: 2, price: 118000, action: "YATIRMA", eligible: false, nearMiss: true, rankScore: 74, dataDate: "2026-07-16T08:00:00Z", dataAgeHours: 4,
   fundamental: { available: false }, kap: { available: true, status: "Kriptoda uygulanmaz" }, quoteVolume24h: 2_000_000_000, priceChangePct24h: 2.4,
   forecasts: { "1": forecastsBist["1"], "6": forecastsBist["5"], "42": forecastsBist["20"] }, forecastDisplay: [{ key: "1", label: "4 SAAT" }, { key: "6", label: "1 GÜN" }, { key: "42", label: "7 GÜN" }],
-  gates: { setup: true, backtest: true, model: true, direction: false, stress: true, liquidity: true, orderPlan: true, dataFresh: true, market: true }, failedGates: [{ key: "direction", label: "Yön" }],
+  strategy: { id: "pullback", label: "Geri çekilme", comparisons: [{ id: "trend" }, { id: "pullback" }, { id: "breakout" }, { id: "meanReversion" }] }, autoWatched: true,
+  gates: { setup: true, backtest: true, model: true, direction: false, stress: true, liquidity: true, orderPlan: true, dataFresh: true, market: true }, failedGates: [{ key: "direction", label: "Yön", message: "1 gün yükseliş %51/%56 gerekli." }],
   links: { tradingView: "https://tr.tradingview.com/chart/?symbol=BINANCE%3ABTCUSDT", exchange: "https://www.binance.com/en/trade/BTC_USDT?type=spot" },
 };
 
 const cached = {
-  version: 4, generatedAt: "2026-07-16T09:00:00.000Z", dataAsOf: "2026-07-16T08:00:00Z", universe: "Geniş BIST + Binance likit USDT spot", scannedCount: 230, requestedCount: 260, errorCount: 0, candidateCount: 1, marketDecision: "YATIR · 1 varlık tüm kapıları geçti", research: { kapCheckedCount: 12, deepResearchLimit: 12 }, marketRegime: { gateOpen: true, dataSufficient: true, coveragePct: 88, breadthPct: 53 }, errors: [], recommendations: [bistItem, cryptoItem], snapshot: [],
+  version: 5, generatedAt: "2026-07-16T09:00:00.000Z", dataAsOf: "2026-07-16T08:00:00Z", universe: "Geniş BIST + Binance likit USDT spot", scannedCount: 230, requestedCount: 260, errorCount: 0, candidateCount: 1, marketDecision: "YATIR · 1 varlık tüm kapıları geçti", research: { kapCheckedCount: 12, deepResearchLimit: 12 }, marketRegime: { gateOpen: true, dataSufficient: true, coveragePct: 88, breadthPct: 53 }, errors: [], recommendations: [bistItem, cryptoItem], snapshot: [], nearWatch: { count: 1, note: "Kapı mesafesi izlenir.", items: [{ key: "crypto:BTCUSDT" }] },
   markets: {
     bist: { universe: "İş Yatırım geniş likit BIST evreni", scannedCount: 100, requestedCount: 120, marketDecision: "YATIR · 1 hisse", marketRegime: { gateOpen: true } },
     crypto: { universe: "Binance likit USDT spot evreni", scannedCount: 130, requestedCount: 140, marketDecision: "YATIRMA · tüm koşulları geçen kripto yok", marketRegime: { gateOpen: true } },
@@ -71,12 +73,17 @@ setTimeout(() => {
     assert.match(elements.recommendations.innerHTML, /THYAO/);
     assert.match(elements.recommendations.innerHTML, /BTC/);
     assert.match(elements.recommendations.innerHTML, /Alış limiti/);
-    assert.match(elements.recommendations.innerHTML, /YATIR'A EN YAKIN/);
-    assert.match(elements.recommendations.innerHTML, /NEDEN YATIRMA|YATIR'A EN YAKIN/);
+    assert.match(elements.recommendations.innerHTML, /YATIR'A 1 KAPI KALDI/);
+    assert.match(elements.recommendations.innerHTML, /1 gün yükseliş %51\/%56 gerekli/);
+    assert.match(elements.recommendations.innerHTML, /Geri çekilme/);
+    assert.match(elements.recommendations.innerHTML, /NEDEN YATIRMA|YATIR'A 1 KAPI KALDI/);
     assert.equal(elements.kapCheckedCount.textContent, "12/12");
+    assert.equal(elements.watchCount.textContent, 1);
     elements.tabCrypto.listeners.click();
     assert.match(elements.recommendations.innerHTML, /BTC/);
     assert.doesNotMatch(elements.recommendations.innerHTML, /THYAO/);
+    elements.tabWatch.listeners.click();
+    assert.match(elements.recommendations.innerHTML, /Otomatik takipte/);
     elements.tabHistory.listeners.click();
     assert.equal(elements.historyPanel.hidden, false);
     assert.match(elements.historyPanel.innerHTML, /Gerçek işlem kaydı değildir/);

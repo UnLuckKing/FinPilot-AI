@@ -8,6 +8,12 @@
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
   const mean = (values) => values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+  const STRATEGY_LIBRARY = Object.freeze({
+    trend: { id: "trend", label: "Trend devamı", thresholdOffset: 0 },
+    pullback: { id: "pullback", label: "Geri çekilme", thresholdOffset: -2 },
+    breakout: { id: "breakout", label: "Kırılım teyidi", thresholdOffset: 2 },
+    meanReversion: { id: "meanReversion", label: "Yatay piyasa dönüşü", thresholdOffset: 3 },
+  });
 
   function quantile(values, percentile) {
     const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
@@ -162,6 +168,9 @@
       const breakoutLow = i > 20 ? lowest(lows, i - 1, 20) : row.low;
       const volumeRatio = volumeAverage[i] > 0 ? row.volume / volumeAverage[i] : 1;
       const trend = fast[i] > slow[i] ? 1 : fast[i] < slow[i] ? -1 : 0;
+      const distanceFastAtr = (row.close - fast[i]) / Math.max(currentAtr, row.close * 0.001);
+      const trendStrengthAtr = (fast[i] - slow[i]) / Math.max(currentAtr, row.close * 0.001);
+      const changeAtr = i > 0 ? (row.close - rows[i - 1].close) / Math.max(currentAtr, row.close * 0.001) : 0;
       const scoreLong =
         (fast[i] > slow[i] ? 22 : 0) +
         (row.close > fast[i] ? 12 : 0) +
@@ -176,6 +185,28 @@
         (macdValues.histogram[i] < 0 ? 16 : 0) +
         (volumeRatio >= 0.8 ? 12 : 0) +
         (row.close < breakoutLow ? 22 : 0);
+      const pullbackScore =
+        (fast[i] > slow[i] ? 22 : 0) +
+        (row.close > slow[i] ? 14 : 0) +
+        (distanceFastAtr >= -0.35 && distanceFastAtr <= 0.75 ? 24 : 0) +
+        (finite(rsiValues[i], 50) >= 42 && finite(rsiValues[i], 50) <= 63 ? 16 : 0) +
+        (macdValues.histogram[i] >= -currentAtr * 0.12 ? 10 : 0) +
+        (volumeRatio >= 0.65 ? 8 : 0) +
+        (changeAtr > 0 ? 6 : 0);
+      const breakoutScore =
+        (fast[i] > slow[i] ? 20 : 0) +
+        (row.close > fast[i] ? 10 : 0) +
+        (row.close > breakoutHigh ? 28 : 0) +
+        (volumeRatio >= 1.10 ? 18 : volumeRatio >= 0.85 ? 8 : 0) +
+        (finite(rsiValues[i], 50) >= 54 && finite(rsiValues[i], 50) <= 76 ? 14 : 0) +
+        (macdValues.histogram[i] > 0 ? 10 : 0);
+      const meanReversionScore =
+        (Math.abs(trendStrengthAtr) <= 1.20 ? 20 : 0) +
+        (finite(rsiValues[i], 50) <= 40 ? 24 : 0) +
+        (row.close <= fast[i] ? 14 : 0) +
+        (changeAtr > 0 ? 22 : 0) +
+        (volumeRatio >= 0.80 ? 10 : 0) +
+        (row.close >= row.low + (row.high - row.low) * 0.55 ? 10 : 0);
       return {
         index: i,
         close: row.close,
@@ -189,8 +220,17 @@
         trend,
         breakoutHigh,
         breakoutLow,
+        distanceFastAtr,
+        trendStrengthAtr,
+        changeAtr,
         scoreLong,
         scoreShort,
+        strategyScores: {
+          trend: scoreLong,
+          pullback: pullbackScore,
+          breakout: breakoutScore,
+          meanReversion: meanReversionScore,
+        },
         vector: [
           clamp((fast[i] - slow[i]) / currentAtr, -4, 4),
           clamp((row.close - fast[i]) / currentAtr, -4, 4),
@@ -202,6 +242,16 @@
         ],
       };
     });
+  }
+
+  function strategySetup(feature, settings = {}) {
+    const mode = STRATEGY_LIBRARY[settings.strategyMode] ? settings.strategyMode : "trend";
+    const threshold = finite(settings.threshold, 62);
+    const score = finite(feature?.strategyScores?.[mode], feature?.scoreLong);
+    const regime = mode === "meanReversion"
+      ? Math.abs(finite(feature?.trendStrengthAtr)) <= 1.20 && finite(feature?.rsi, 50) <= 42 && finite(feature?.changeAtr) > 0
+      : feature?.trend > 0;
+    return { mode, label: STRATEGY_LIBRARY[mode].label, threshold, score, regime, long: Boolean(regime) && score >= threshold };
   }
 
   function sigmoid(value) { return 1 / (1 + Math.exp(-clamp(value, -30, 30))); }
@@ -346,7 +396,8 @@
         }
       }
       if (!active && i >= cooldownUntil && features[i].atrPct <= finite(settings.maxAtrPct, 8)) {
-        const longSetup = features[i].trend > 0 && features[i].scoreLong >= threshold;
+        const strategy = strategySetup(features[i], { ...settings, threshold });
+        const longSetup = strategy.long;
         const shortSetup = allowShort && features[i].trend < 0 && features[i].scoreShort >= threshold;
         if (longSetup || shortSetup) {
           const side = longSetup ? "LONG" : "SHORT";
@@ -359,7 +410,8 @@
             riskDistance,
             stop: side === "LONG" ? row.close - riskDistance : row.close + riskDistance,
             target: side === "LONG" ? row.close + riskDistance * rewardRisk : row.close - riskDistance * rewardRisk,
-            score: longSetup ? features[i].scoreLong : features[i].scoreShort,
+            strategy: strategy.mode,
+            score: longSetup ? strategy.score : features[i].scoreShort,
           };
         }
       }
@@ -479,15 +531,16 @@
 
   function analyze(rows, settings = {}) {
     if (!Array.isArray(rows) || rows.length < 60) throw new Error("Analiz için yeterli mum yok.");
-    const features = featureMatrix(rows, settings);
+    const prepared = settings._prepared || null;
+    const features = prepared?.features || featureMatrix(rows, settings);
     const backtestResult = backtest(rows, features, settings);
-    const model = trainLocalModel(rows, features, settings);
+    const model = prepared?.model || trainLocalModel(rows, features, settings);
     const forecastHorizons = Array.isArray(settings.forecastHorizons)
       ? [...new Set(settings.forecastHorizons.map((value) => Math.max(1, Math.floor(finite(value)))).filter(Number.isFinite))].slice(0, 4)
       : [1, 5, 20];
     const safeHorizons = forecastHorizons.length ? forecastHorizons : [1, 5, 20];
     const primaryHorizon = Math.max(1, Math.floor(finite(settings.primaryHorizon, safeHorizons.includes(5) ? 5 : safeHorizons[Math.min(1, safeHorizons.length - 1)])));
-    const forecasts = safeHorizons.map((horizon) => analogForecast(rows, features, horizon, settings));
+    const forecasts = prepared?.forecasts || safeHorizons.map((horizon) => analogForecast(rows, features, horizon, settings));
     const primaryForecast = forecasts.find((forecast) => forecast.horizon === primaryHorizon) || forecasts[0];
     const latest = features[features.length - 1];
     const minimumTrades = finite(settings.minimumTrades, 30);
@@ -497,7 +550,8 @@
       : backtestReady ? backtestResult.smoothedWinProbability : model.available ? (latest.trend >= 0 ? model.probabilityUp : model.probabilityDown) : 50;
     if (primaryForecast?.available) blendedProbability = blendedProbability * 0.68 + primaryForecast.probabilityUp * 0.32;
     const positiveEdge = backtestReady && backtestResult.profitFactor >= 1.15 && backtestResult.expectancyR > 0;
-    const longCandidate = latest.trend > 0 && latest.scoreLong >= finite(settings.threshold, 62);
+    const activeStrategy = strategySetup(latest, settings);
+    const longCandidate = activeStrategy.long;
     const shortCandidate = Boolean(settings.allowShort) && latest.trend < 0 && latest.scoreShort >= finite(settings.threshold, 62);
     let decision = "BEKLE";
     if (!backtestReady) decision = "VERİ YETERSİZ";
@@ -506,6 +560,7 @@
     else if (shortCandidate) decision = "SHORT ADAYI";
     const agents = [
       { name: "Trend Ajanı", status: latest.trend > 0 ? "Olumlu" : latest.trend < 0 ? "Olumsuz" : "Nötr", score: latest.trend > 0 ? 78 : latest.trend < 0 ? 22 : 50, detail: latest.trend > 0 ? "Hızlı ortalama yavaş ortalamanın üzerinde." : "Trend yapısı yükselişi doğrulamıyor." },
+      { name: "Strateji Seçici", status: activeStrategy.long ? "Kurulum var" : "Bekliyor", score: activeStrategy.score, detail: `${activeStrategy.label}: ${activeStrategy.score.toFixed(0)}/${activeStrategy.threshold.toFixed(0)}; piyasa rejimi ${activeStrategy.regime ? "uygun" : "uygun değil"}.` },
       { name: "Momentum Ajanı", status: latest.rsi >= 52 && latest.macdHistogram > 0 ? "Olumlu" : "Zayıf", score: clamp(50 + (latest.rsi - 50) * 1.2 + Math.sign(latest.macdHistogram) * 12, 0, 100), detail: `RSI ${latest.rsi.toFixed(1)}, MACD histogram ${latest.macdHistogram.toFixed(4)}.` },
       { name: "Hacim Ajanı", status: latest.volumeRatio >= 1 ? "Destekli" : "Zayıf", score: clamp(latest.volumeRatio * 55, 0, 100), detail: `Hacim, 20 mum ortalamasının ${latest.volumeRatio.toFixed(2)} katı.` },
       { name: "Backtest Denetçisi", status: positiveEdge ? "Geçti" : "Reddetti", score: clamp(backtestResult.profitFactor * 45, 0, 100), detail: `${backtestResult.totalTrades} işlem, PF ${Number.isFinite(backtestResult.profitFactor) ? backtestResult.profitFactor.toFixed(2) : "∞"}, beklenti ${backtestResult.expectancyR.toFixed(2)}R.` },
@@ -519,9 +574,10 @@
       model,
       forecasts,
       primaryHorizon,
+      strategy: activeStrategy,
       agents,
       decision,
-      setupScore: Math.max(latest.scoreLong, latest.scoreShort),
+      setupScore: Math.max(activeStrategy.score, latest.scoreShort),
       estimatedProbability: clamp(blendedProbability, 5, 95),
       probabilityLabel: !backtestReady ? "Hesaplanamaz" : backtestResult.totalTrades >= 100 && model.available ? "Orta-yüksek" : backtestResult.totalTrades >= 30 ? "Orta" : "Düşük",
       reasons: [
@@ -533,5 +589,48 @@
     };
   }
 
-  return { parseCsv, analyze, riskPlan, wilsonInterval, featureMatrix, backtest, trainLocalModel, analogForecast, monteCarloStress };
+  function analyzeStrategies(rows, settings = {}) {
+    if (!Array.isArray(rows) || rows.length < 60) throw new Error("Analiz için yeterli mum yok.");
+    const modes = (Array.isArray(settings.strategyModes) ? settings.strategyModes : Object.keys(STRATEGY_LIBRARY)).filter((mode) => STRATEGY_LIBRARY[mode]);
+    const safeModes = modes.length ? [...new Set(modes)] : ["trend"];
+    const features = featureMatrix(rows, settings);
+    const model = trainLocalModel(rows, features, settings);
+    const forecastHorizons = Array.isArray(settings.forecastHorizons)
+      ? [...new Set(settings.forecastHorizons.map((value) => Math.max(1, Math.floor(finite(value)))).filter(Number.isFinite))].slice(0, 4)
+      : [1, 5, 20];
+    const safeHorizons = forecastHorizons.length ? forecastHorizons : [1, 5, 20];
+    const forecasts = safeHorizons.map((horizon) => analogForecast(rows, features, horizon, settings));
+    const prepared = { features, model, forecasts };
+    const baseThreshold = finite(settings.threshold, 62);
+    const analyses = safeModes.map((mode) => {
+      const profile = STRATEGY_LIBRARY[mode];
+      const analysis = analyze(rows, { ...settings, strategyMode: mode, threshold: baseThreshold + profile.thresholdOffset, _prepared: prepared });
+      const backtestResult = analysis.backtest;
+      const profitFactorScore = Number.isFinite(backtestResult.profitFactor) ? clamp(backtestResult.profitFactor * 35, 0, 100) : 100;
+      const sampleScore = clamp(backtestResult.totalTrades / Math.max(1, finite(settings.minimumTrades, 20)) * 55, 0, 100);
+      const recentScore = clamp(50 + backtestResult.recentExpectancyR * 45, 0, 100);
+      const selectionScore = analysis.setupScore * 0.34 + profitFactorScore * 0.23 + clamp(50 + backtestResult.expectancyR * 40, 0, 100) * 0.17 + recentScore * 0.14 + sampleScore * 0.12 + (analysis.decision === "LONG ADAYI" ? 12 : 0);
+      return { ...analysis, selectionScore: clamp(selectionScore, 0, 100) };
+    });
+    analyses.sort((a, b) => Number(b.decision === "LONG ADAYI") - Number(a.decision === "LONG ADAYI") || b.selectionScore - a.selectionScore || b.backtest.totalTrades - a.backtest.totalTrades);
+    const selected = analyses[0];
+    return {
+      selected,
+      strategies: analyses.map((analysis) => ({
+        id: analysis.strategy.mode,
+        label: analysis.strategy.label,
+        decision: analysis.decision,
+        setupScore: analysis.setupScore,
+        threshold: analysis.strategy.threshold,
+        regime: analysis.strategy.regime,
+        selectionScore: analysis.selectionScore,
+        trades: analysis.backtest.totalTrades,
+        profitFactor: analysis.backtest.profitFactor,
+        expectancyR: analysis.backtest.expectancyR,
+        recentExpectancyR: analysis.backtest.recentExpectancyR,
+      })),
+    };
+  }
+
+  return { STRATEGY_LIBRARY, parseCsv, analyze, analyzeStrategies, strategySetup, riskPlan, wilsonInterval, featureMatrix, backtest, trainLocalModel, analogForecast, monteCarloStress };
 });

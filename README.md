@@ -1,4 +1,4 @@
-# FinPilot AI v2.0
+# FinPilot AI v2.1
 
 FinPilot AI; portföy takibi, yatırım bütçesi, varlık dağılımı, risk görünümü, hedefler ve açıklanabilir finansal analiz sunan Türkçe bir karar destek uygulamasıdır.
 
@@ -60,13 +60,15 @@ npm start
 - İş Yatırım temel tablosundan fiili dolaşım piyasa değerine göre en fazla 120 likit BIST hissesi seçer; veri kaynağı bozulursa 30 hisselik yedek havuza geçer.
 - Binance'in anahtarsız herkese açık piyasa verisinden en fazla 140 likit USDT spot çifti seçer; stablecoin ve `UP/DOWN/BULL/BEAR` kaldıraçlı tokenları dışlar.
 - BIST için 1, 5 ve 20 işlem günü; kripto için 4 saat, 1 gün ve 7 gün yükseliş/düşüş/yatay olasılığı ile beklenen aralık gösterir.
-- Trend, momentum, hacim, masraflı backtest, yakın dönem rejimi, kronolojik yerel model ve 250 senaryolu Monte Carlo stres testi uygular.
-- BIST'te temel değerleme ve güncel KAP akışı; kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı zorunlu kapılardır.
-- Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar; kartın üstünde geçmeyen kapıları doğrudan listeler ve “YATIR'a en yakın” sonuçları işaretler.
-- Pazarın fiyat adımına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef yalnızca geçerli `YATIR` sinyalinde etkinleşir.
-- `Tümü`, `BIST`, `Kripto` ve `Geçmiş` sekmeleri vardır. Geçmiş, üretilen sinyalleri sonraki kapanmış tarama fiyatlarıyla izler; gerçek aracı kurum performansı değildir.
+- Trend devamı, geri çekilme, kırılım teyidi ve yatay piyasa dönüşü stratejilerini aynı veri üzerinde ayrı ayrı backtest eder; geçerli kurulumlara öncelik vererek en güçlü yaklaşımı seçer.
+- Momentum, hacim, masraflı backtest, yakın dönem rejimi, kronolojik yerel model ve 250 senaryolu Monte Carlo stres testi uygular.
+- BIST temel oranlarını banka/finans, holding, gayrimenkul, büyüme-hizmet ve sanayi için farklı sektör ağırlıklarıyla karşılaştırır; güncel KAP ayrıca zorunlu kapıdır. Kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı kapılardır.
+- Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar; reddedilen her kapıda gerçekleşen değer ile gerekli eşiği sayısal olarak gösterir.
+- Destek geri çekilmesi, EMA yeniden testi ve ATR dengeli olmak üzere üç emir planı hesaplar. Fiyat adımına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef yalnızca geçerli `YATIR` sinyalinde etkinleşir.
+- `Tümü`, `BIST`, `Kripto`, `Takip` ve `Geçmiş` sekmeleri vardır. Takip, en fazla üç eksik kapısı kalan varlıkların taramadan taramaya ilerlemesini ölçer; Geçmiş ise sinyalleri sonraki kapanmış tarama fiyatlarıyla izler.
+- Aynı piyasa ve stratejide en az 12 izlenen sonuç biriktiğinde kazanma oranı `%40`ın veya ortalama sonuç `0R`ın altına düşerse performans koruması yeni olumlu sinyali kilitler. Bu izleme gerçek aracı kurum gerçekleşmesi değildir.
 - Bir piyasa kaynağı hata verse bile diğer piyasanın taraması devam eder. Eksik veya eski veriden olumlu sinyal üretilmez.
-- Yeni `YATIR` sonucu oluştuğunda yerel Chrome bildirimi gösterir ve Chrome açıkken yaklaşık 4 saatte bir yenilenir.
+- Yeni `YATIR` sonucu oluştuğunda ve takipteki bir varlık tek eksik kapıya yaklaştığında yerel Chrome bildirimi gösterir. Tarama, Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir.
 - İsteğe bağlı Pine Script v6 araçları yalnızca grafik teyidi içindir; TradingView'in fiyat/indikatör verisi için halka açık bir API'si olmadığından panel veriyi TradingView'den çekmez.
 
 Kurulum için [TRADINGVIEW-KURULUM.md](TRADINGVIEW-KURULUM.md) dosyasını izleyin veya Windows'ta `TRADINGVIEW-KURULUMUNU-AC.bat` dosyasını çalıştırın.

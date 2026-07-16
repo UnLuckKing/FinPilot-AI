@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-require("./engine.js");
+const engine = require("./engine.js");
 const scanner = require("./auto-scanner.js");
 
 function payload(count = 520) {
@@ -46,12 +46,19 @@ assert.equal(parsedFundamentals.get("THYAO").sector, "Havayolları");
 assert.equal(parsedFundamentals.get("THYAO").pe, 3.2);
 assert.equal(parsedFundamentals.get("THYAO").marketCapTryM, 455400);
 assert.ok(parsedFundamentals.get("THYAO").score > parsedFundamentals.get("PGSUS").score);
+assert.equal(scanner.sectorScoringProfile("Bankacılık").id, "financial");
+assert.equal(scanner.sectorScoringProfile("Teknoloji").weights.evSales, 40);
 
 assert.equal(scanner.tickSizeForPrice(19.99), 0.01);
 assert.equal(scanner.tickSizeForPrice(20), 0.02);
 assert.equal(scanner.tickSizeForPrice(312.5), 0.25);
 assert.equal(scanner.roundToTick(312.63, "down"), 312.5);
 assert.equal(scanner.businessDaysAge("2026-07-17", new Date("2026-07-20T12:00:00Z")), 1);
+const planAnalysis = engine.analyzeStrategies(rows, { ...scanner.PROFILE, minimumTrades: 5 }).selected;
+const orderPlans = scanner.buildOrderPlans(rows, planAnalysis.latest, planAnalysis.strategy.mode);
+assert.equal(orderPlans.length, 3);
+assert.ok(orderPlans.some((plan) => plan.valid));
+assert.ok(orderPlans.every((plan) => Array.isArray(plan.failureReasons)));
 
 const kapDirectory = scanner.parseKapDirectoryHtml('<a href="/tr/sirket-bilgileri/ozet/1107-turk-hava-yollari-a-o">THYAO</a>');
 assert.match(kapDirectory.get("THYAO").url, /1107-turk-hava-yollari/);
@@ -112,6 +119,9 @@ const mockFetch = async (url) => {
   assert.ok(["YATIR", "YATIRMA"].includes(result.recommendations[0].action));
   assert.deepEqual(Object.keys(result.recommendations[0].forecasts).sort(), ["1", "20", "5"]);
   assert.equal(result.recommendations.find((item) => item.symbol === "THYAO").fundamental.available, true);
+  assert.equal(result.recommendations[0].strategy.comparisons.length, 4);
+  assert.equal(result.recommendations[0].orderPlan.alternatives.length, 3);
+  assert.ok(Object.values(result.recommendations[0].gateDiagnostics).every((gate) => typeof gate.message === "string"));
 
   const partialSymbols = ["AAA1", "AAA2", "AAA3", "AAA4", "AAA5", "AAA6", "AAA7", "AAA8", "AAA9", "AAB1"];
   const partialFundamentals = new Map(partialSymbols.map((symbol) => [symbol, { available: true, score: 60, status: "Dengeli", sector: "Test" }]));

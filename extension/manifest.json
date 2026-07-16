@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "FinPilot Multi-Market Agent",
-  "version": "2.0.0",
-  "description": "Geniş BIST ve Binance spot evrenini ayrı modellerle araştıran, YATIR/YATIRMA ve limit/stop-limit planı üreten fail-closed panel.",
+  "version": "2.1.0",
+  "description": "BIST ve Binance spotta dört stratejiyi karşılaştıran, üç emir planı ve sayısal kapı açıklamaları üreten fail-closed araştırma paneli.",
   "permissions": ["storage", "tabs", "activeTab", "sidePanel", "alarms", "notifications"],
   "host_permissions": ["https://*.tradingview.com/*", "https://www.isyatirim.com.tr/*", "https://www.borsaistanbul.com/*", "https://kap.org.tr/*", "https://www.kap.org.tr/*", "https://api.binance.com/*", "https://api1.binance.com/*", "https://data-api.binance.vision/*"],
   "background": { "service_worker": "background.js" },

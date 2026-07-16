@@ -16,7 +16,7 @@
     <section class="hero">
       <div class="source-line"><span>ÜCRETSİZ PİYASA VERİLERİ</span><b>İş Yatırım · KAP · Binance</b></div>
       <h1>Hisse ve kriptoyu tarar.<br><em>Geçmeyen kapıyı açıklar.</em></h1>
-      <p>Geniş likit BIST havuzu ile Binance USDT spot çiftlerini ayrı modellerle inceler; YATIR/YATIRMA, limit, stop-limit ve çok vadeli yön üretir.</p>
+      <p>Geniş likit BIST havuzu ile Binance USDT spot çiftlerinde dört stratejiyi karşılaştırır; YATIR/YATIRMA, üç emir planı, stop-limit ve çok vadeli yön üretir.</p>
       <button class="scan-button" id="runScan"><span>✦</span><b>ŞİMDİ TÜM PİYASALARI ARAŞTIR</b><small>Tek tık · manuel fiyat veya CSV yok</small></button>
       <div class="auto-note"><i></i><span>Chrome açıkken 4 saatte bir kapanmış verilerle yenilenir.</span></div>
     </section>
@@ -52,6 +52,7 @@
         <button id="tabAll" class="market-tab active" type="button">Tümü <b id="allCount">0</b></button>
         <button id="tabBist" class="market-tab" type="button">BIST <b id="bistCount">0</b></button>
         <button id="tabCrypto" class="market-tab" type="button">Kripto <b id="cryptoCount">0</b></button>
+        <button id="tabWatch" class="market-tab" type="button">Takip <b id="watchCount">0</b></button>
         <button id="tabHistory" class="market-tab" type="button">Geçmiş <b id="historyCount">0</b></button>
       </nav>
 
@@ -66,18 +67,20 @@
     </div>
 
     <section class="method-card">
-      <div class="method-title"><span>10</span><div><small>AYRI RİSK KAPILARI</small><h2>Karar nasıl oluşuyor?</h2></div></div>
+      <div class="method-title"><span>12</span><div><small>AYRI RİSK KAPILARI</small><h2>Karar nasıl oluşuyor?</h2></div></div>
       <div class="method-list">
         <p><i>1</i><span><b>Veri</b> · Tazelik ve kapsam</span></p>
-        <p><i>2</i><span><b>Trend</b> · EMA ve piyasa yönü</span></p>
-        <p><i>3</i><span><b>Momentum</b> · RSI, MACD, hacim</span></p>
-        <p><i>4</i><span><b>Likidite</b> · BIST/kripto filtresi</span></p>
-        <p><i>5</i><span><b>Yön</b> · Üç ayrı vade</span></p>
-        <p><i>6</i><span><b>Backtest</b> · Masraf ve gap</span></p>
-        <p><i>7</i><span><b>ML</b> · Kronolojik test</span></p>
-        <p><i>8</i><span><b>Stres</b> · Monte Carlo yolları</span></p>
-        <p><i>9</i><span><b>KAP/BTC</b> · Pazar özel kapı</span></p>
-        <p><i>10</i><span><b>Emir</b> · Limit ve stop-limit</span></p>
+        <p><i>2</i><span><b>Strateji</b> · 4 modelden seçim</span></p>
+        <p><i>3</i><span><b>Trend</b> · EMA ve piyasa yönü</span></p>
+        <p><i>4</i><span><b>Momentum</b> · RSI, MACD, hacim</span></p>
+        <p><i>5</i><span><b>Likidite</b> · BIST/kripto filtresi</span></p>
+        <p><i>6</i><span><b>Yön</b> · Üç ayrı vade</span></p>
+        <p><i>7</i><span><b>Backtest</b> · Masraf ve gap</span></p>
+        <p><i>8</i><span><b>ML</b> · Kronolojik test</span></p>
+        <p><i>9</i><span><b>Stres</b> · Monte Carlo yolları</span></p>
+        <p><i>10</i><span><b>KAP/BTC</b> · Pazar özel kapı</span></p>
+        <p><i>11</i><span><b>Emir</b> · 3 limit/stop planı</span></p>
+        <p><i>12</i><span><b>Performans</b> · Bozulan modeli kilitle</span></p>
       </div>
     </section>
 
@@ -90,6 +93,7 @@
   <script src="crypto-scanner.js"></script>
   <script src="market-aggregator.js"></script>
   <script src="signal-tracker.js"></script>
+  <script src="near-watch.js"></script>
   <script src="panel.js"></script>
 </body>
 </html>

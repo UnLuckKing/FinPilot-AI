@@ -39,7 +39,7 @@
       ? `YATIR · ${eligible.length} varlık tüm kapıları geçti`
       : scannedCount ? "YATIRMA · tüm koşulları geçen varlık yok" : "YATIRMA · piyasa verisi alınamadı";
     return {
-      version: 4,
+      version: 5,
       mode: "fail-closed-recommendation",
       generatedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
       dataAsOf: [bist.dataAsOf, crypto.dataAsOf].filter(Boolean).sort().at(-1) || null,

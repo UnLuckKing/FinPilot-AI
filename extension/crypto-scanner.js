@@ -164,35 +164,83 @@
     return Number.isFinite(closedAt) && Number.isFinite(end) ? Math.max(0, (end - closedAt) / 3600000) : Infinity;
   }
 
-  function buildCryptoOrderPlan(rows, latest, asset, profile = CRYPTO_PROFILE) {
+  function buildCryptoOrderCandidate(rows, latest, asset, definition, preferred = false) {
+    const atr = Math.max(Number.EPSILON, finite(latest.atr));
     const tick = Math.max(Number.EPSILON, finite(asset.tickSize));
-    const lowerBound = latest.close - latest.atr * 0.80;
-    const upperBound = latest.close - latest.atr * 0.08;
-    const supportEntry = finite(latest.fast, latest.close) + latest.atr * 0.16;
-    const limitBuy = roundToStep(clamp(Math.min(latest.close - latest.atr * 0.14, supportEntry), lowerBound, upperBound), tick, "down");
-    const recentLows = rows.slice(-12).map((row) => row.low).filter(Number.isFinite);
-    const swingLow = recentLows.length ? Math.min(...recentLows) : limitBuy - latest.atr * profile.stopAtr;
-    const stopTrigger = roundToStep(Math.min(limitBuy - latest.atr * 1.70, swingLow - latest.atr * 0.08), tick, "down");
-    const stopLimit = roundToStep(stopTrigger - Math.max(latest.atr * 0.14, tick * 3), tick, "down");
+    const limitBuy = roundToStep(definition.entry, tick, "down");
+    const stopTrigger = roundToStep(definition.stop, tick, "down");
+    const stopLimitBuffer = Math.max(atr * 0.14, tick * 3);
+    const stopLimit = roundToStep(stopTrigger - stopLimitBuffer, tick, "down");
     const riskDistance = limitBuy - stopTrigger;
     const target1 = roundToStep(limitBuy + riskDistance * 1.50, tick);
     const target2 = roundToStep(limitBuy + riskDistance * 2.20, tick);
     const riskPct = limitBuy > 0 ? riskDistance / limitBuy * 100 : Infinity;
-    const valid = limitBuy > 0 && stopLimit > 0 && stopLimit < stopTrigger && stopTrigger < limitBuy && target1 > limitBuy && target2 > target1 && riskDistance >= latest.atr * 1.50 && riskDistance <= latest.atr * 3.20 && riskPct <= 12;
+    const riskAtr = riskDistance / atr;
+    const entryDistanceAtr = (finite(latest.close) - limitBuy) / atr;
+    const checks = {
+      ordering: limitBuy > 0 && stopLimit > 0 && stopLimit < stopTrigger && stopTrigger < limitBuy && target1 > limitBuy && target2 > target1,
+      atrRisk: riskAtr >= 1.50 && riskAtr <= 3.20,
+      riskPct: riskPct <= 12,
+      entryDistance: entryDistanceAtr >= 0.04 && entryDistanceAtr <= 1.15,
+    };
+    const failureReasons = [];
+    if (!checks.ordering) failureReasons.push("Fiyat sıralaması geçersiz: stop-limit < stop < alış < hedef koşulu sağlanmadı.");
+    if (!checks.atrRisk) failureReasons.push(`Stop mesafesi ${riskAtr.toFixed(2)} ATR; gerekli aralık 1.50–3.20 ATR.`);
+    if (!checks.riskPct) failureReasons.push(`Stop riski %${riskPct.toFixed(2)}; izin verilen üst sınır %12.00.`);
+    if (!checks.entryDistance) failureReasons.push(`Alış limiti son fiyattan ${entryDistanceAtr.toFixed(2)} ATR uzakta; gerekli aralık 0.04–1.15 ATR.`);
+    const valid = Object.values(checks).every(Boolean);
+    const quality = clamp(100 - Math.abs(riskAtr - 2.20) * 12 - Math.abs(entryDistanceAtr - 0.40) * 10 - Math.max(0, riskPct - 6) * 1.5 + (preferred ? 6 : 0) - failureReasons.length * 22, 0, 100);
     return {
+      id: definition.id,
+      label: definition.label,
+      explanation: definition.explanation,
+      preferred,
+      quality,
       valid,
       limitBuy,
       stopTrigger,
       stopLimit,
+      stopLimitBuffer,
       target1,
       target2,
       riskDistance,
       riskPct,
+      riskAtr,
+      entryDistanceAtr,
       rewardRisk1: riskDistance > 0 ? (target1 - limitBuy) / riskDistance : 0,
       rewardRisk2: riskDistance > 0 ? (target2 - limitBuy) / riskDistance : 0,
+      checks,
+      failureReasons,
       validUntil: new Date((rows.at(-1)?.closedAt || Date.now()) + 24 * 3600000).toISOString(),
       warning: "Kripto 24/7 işlem görür; stop-limit sert harekette gerçekleşmeyebilir.",
     };
+  }
+
+  function buildCryptoOrderPlans(rows, latest, asset, profile = CRYPTO_PROFILE, strategyId = "trend") {
+    const atr = Math.max(Number.EPSILON, finite(latest.atr));
+    const close = finite(latest.close);
+    const lowerBound = close - atr * 1.05;
+    const upperBound = close - atr * 0.06;
+    const recentLows = rows.slice(-12).map((row) => row.low).filter(Number.isFinite);
+    const swingLow = recentLows.length ? Math.min(...recentLows) : close - atr * profile.stopAtr;
+    const supportEntry = clamp(Math.min(close - atr * 0.14, finite(latest.fast, close) + atr * 0.16), lowerBound, upperBound);
+    const emaEntry = clamp(finite(latest.fast, close) + atr * 0.06, lowerBound, upperBound);
+    const balancedEntry = clamp(close - atr * 0.28, lowerBound, upperBound);
+    const preferredId = strategyId === "pullback" ? "ema-retest" : strategyId === "trend" ? "support-pullback" : "atr-balanced";
+    const definitions = [
+      { id: "support-pullback", label: "Destek geri çekilmesi", explanation: "Yakın destek çevresinde geri çekilme bekler.", entry: supportEntry, stop: Math.min(supportEntry - atr * 1.70, swingLow - atr * 0.08) },
+      { id: "ema-retest", label: "EMA yeniden testi", explanation: "Hızlı ortalamaya dönüşte yapısal stop uygular.", entry: emaEntry, stop: Math.min(emaEntry - atr * 1.85, finite(latest.slow, emaEntry - atr * 1.70) - atr * 0.08) },
+      { id: "atr-balanced", label: "ATR dengeli plan", explanation: "Kırılım veya dönüşte sabitlenmiş volatilite riski uygular.", entry: balancedEntry, stop: balancedEntry - atr * 2.25 },
+    ];
+    return definitions
+      .map((definition) => buildCryptoOrderCandidate(rows, latest, asset, definition, definition.id === preferredId))
+      .sort((a, b) => Number(b.valid) - Number(a.valid) || Number(b.preferred) - Number(a.preferred) || b.quality - a.quality);
+  }
+
+  function buildCryptoOrderPlan(rows, latest, asset, profile = CRYPTO_PROFILE, strategyId = "trend") {
+    const alternatives = buildCryptoOrderPlans(rows, latest, asset, profile, strategyId);
+    const selected = alternatives[0];
+    return { ...selected, alternatives, validPlanCount: alternatives.filter((plan) => plan.valid).length };
   }
 
   function evaluateCrypto(analysis, asset, profile = CRYPTO_PROFILE) {
@@ -217,7 +265,7 @@
     const profile = { ...CRYPTO_PROFILE, ...(options.profile || {}) };
     const latest = analysis.latest;
     const evaluation = evaluateCrypto(analysis, asset, profile);
-    const orderPlan = buildCryptoOrderPlan(rows, latest, asset, profile);
+    const orderPlan = buildCryptoOrderPlan(rows, latest, asset, profile, analysis.strategy?.mode);
     const ageHours = dataAgeHours(rows.at(-1)?.closedAt, options.now || new Date());
     const dataFresh = ageHours <= profile.maximumDataAgeHours;
     const forecasts = Object.fromEntries((analysis.forecasts || []).map((forecast) => [String(forecast.horizon), forecast]));
@@ -234,6 +282,19 @@
       orderPlan: orderPlan.valid,
       dataFresh,
       market: false,
+    };
+    const pfText = Number.isFinite(analysis.backtest.profitFactor) ? analysis.backtest.profitFactor.toFixed(2) : "∞";
+    const gateDiagnostics = {
+      setup: { passed: evaluation.setup, label: "Kurulum", message: `${analysis.strategy?.label || "Strateji"}: ${analysis.setupScore.toFixed(0)}/${finite(analysis.strategy?.threshold, profile.threshold).toFixed(0)}; rejim ${analysis.strategy?.regime ? "uygun" : "uygun değil"}.` },
+      backtest: { passed: evaluation.backtestEdge, label: "Backtest", message: `${analysis.backtest.totalTrades}/${profile.minimumTrades} işlem · PF ${pfText}/${profile.minimumProfitFactor.toFixed(2)} · beklenti ${analysis.backtest.expectancyR.toFixed(2)}R/${profile.minimumExpectancyR.toFixed(2)}R.` },
+      model: { passed: evaluation.modelEdge, label: "ML", message: analysis.model.available ? `Yükseliş %${analysis.model.probabilityUp.toFixed(1)}/%${profile.minimumModelProbability} · doğruluk %${analysis.model.outOfSampleAccuracy.toFixed(1)}/%48 · Brier ${analysis.model.brierScore.toFixed(3)}/${profile.maximumBrierScore.toFixed(2)} azami.` : "ML modeli için yeterli kronolojik örnek yok." },
+      direction: { passed: evaluation.directionEdge, label: "Yön", message: primary?.available ? `1 gün yükseliş %${primary.probabilityUp.toFixed(1)}/%${profile.minimumDirectionProbability} · düşüş %${primary.probabilityDown.toFixed(1)}/%${profile.maximumDirectionDownProbability} azami · medyan %${primary.expectedMedianPct.toFixed(2)}.` : "1 günlük yön örneği yetersiz." },
+      recentRegime: { passed: evaluation.recentEdge, label: "Yakın dönem", message: `${analysis.backtest.recentTrades}/6 işlem · PF ${analysis.backtest.recentProfitFactor.toFixed(2)}/1.00 · beklenti ${analysis.backtest.recentExpectancyR.toFixed(2)}R/>0R.` },
+      stress: { passed: evaluation.stressEdge, label: "Stres", message: analysis.backtest.stress?.available ? `Pozitif senaryo %${analysis.backtest.stress.profitablePct.toFixed(1)}/%${profile.minimumStressProfitability}.` : "Stres testi için en az 8 işlem gerekli." },
+      liquidity: { passed: evaluation.liquidityEdge, label: "Likidite/pump", message: `Hacim ${(asset.quoteVolume / 1_000_000).toFixed(1)}/${(profile.minimumQuoteVolume / 1_000_000).toFixed(1)} milyon USDT · işlem ${asset.trades24h}/${profile.minimumTrades24h} · hareket %${Math.abs(asset.priceChangePct).toFixed(1)}/%${profile.maximumDailyMovePct} azami.` },
+      orderPlan: { passed: orderPlan.valid, label: "Emir planı", message: orderPlan.valid ? `${orderPlan.label}: 3 plandan ${orderPlan.validPlanCount} tanesi geçerli; risk ${orderPlan.riskAtr.toFixed(2)} ATR ve %${orderPlan.riskPct.toFixed(2)}.` : (orderPlan.failureReasons || ["Üç emir planı da risk sınırlarını geçemedi."]).join(" ") },
+      dataFresh: { passed: dataFresh, label: "Tazelik", message: `Veri yaşı ${ageHours.toFixed(1)} saat; azami ${profile.maximumDataAgeHours} saat.` },
+      market: { passed: false, label: "BTC/piyasa", message: "BTC ve piyasa genişliği tarama sonunda hesaplanacak." },
     };
     return {
       market: "crypto",
@@ -280,16 +341,27 @@
       ],
       direction: primary?.available ? primary.direction : "BELİRSİZ",
       confidence: analysis.probabilityLabel,
+      strategy: {
+        id: analysis.strategy?.mode || "trend",
+        label: analysis.strategy?.label || "Trend devamı",
+        threshold: analysis.strategy?.threshold,
+        score: analysis.strategy?.score,
+        selectionScore: analysis.selectionScore,
+        comparisons: analysis.strategyComparisons || [],
+      },
       orderPlan,
       levels: { limitBuy: orderPlan.limitBuy, stopTrigger: orderPlan.stopTrigger, stopLimit: orderPlan.stopLimit, target1: orderPlan.target1, target2: orderPlan.target2 },
       gates,
+      gateDiagnostics,
       reasons: [
+        `Seçilen yaklaşım: ${analysis.strategy?.label || "Trend devamı"}; ${analysis.strategyComparisons?.length || 1} strateji aynı veri üzerinde ayrı backtest edildi.`,
         `Binance spot hacmi ${Math.round(asset.quoteVolume / 1_000_000).toLocaleString("tr-TR")} milyon USDT; 24 saatlik hareket %${asset.priceChangePct.toFixed(2)}.`,
         `4 saatlik kurulum puanı ${analysis.setupScore.toFixed(1)}; piyasa yönü ${latest.trend > 0 ? "yukarı" : latest.trend < 0 ? "aşağı" : "yatay"}.`,
         `Masraflı backtest: ${analysis.backtest.totalTrades} işlem, PF ${Number.isFinite(analysis.backtest.profitFactor) ? analysis.backtest.profitFactor.toFixed(2) : "∞"}, beklenti ${analysis.backtest.expectancyR.toFixed(2)}R.`,
         primary?.available ? `1 günlük yön: yükseliş %${primary.probabilityUp.toFixed(1)}, düşüş %${primary.probabilityDown.toFixed(1)}, yatay %${primary.probabilityFlat.toFixed(1)}.` : "1 günlük yön modeli için benzer dönem yetersiz.",
         analysis.model.available ? `Yerel model yükseliş %${analysis.model.probabilityUp.toFixed(1)}; kronolojik test doğruluğu %${analysis.model.outOfSampleAccuracy.toFixed(1)}.` : "Yerel model için veri yetersiz.",
         analysis.backtest.stress?.available ? `Stres senaryolarının %${analysis.backtest.stress.profitablePct.toFixed(1)} kadarı pozitif kapandı.` : "Stres testi için işlem sayısı yetersiz.",
+        orderPlan.valid ? `${orderPlan.label} seçildi; 3 plandan ${orderPlan.validPlanCount} tanesi risk sınırlarını geçti.` : `Üç emir planı da geçemedi: ${(orderPlan.failureReasons || []).join(" ")}`,
         dataFresh ? `Son kapanmış 4 saatlik mum ${ageHours.toFixed(1)} saat yaşında.` : `Veri ${ageHours.toFixed(1)} saat yaşında; tazelik kapısı kapalı.`,
       ],
       links: {
@@ -300,12 +372,20 @@
     };
   }
 
-  function finalizeCryptoRecommendation(item, marketGateOpen, dataSufficient, btcHealthy) {
+  function finalizeCryptoRecommendation(item, marketGateOpen, dataSufficient, btcHealthy, marketContext = {}) {
     const marketGate = Boolean(marketGateOpen) && Boolean(dataSufficient);
     const eligible = Boolean(item.preEligible) && marketGate;
     const gates = { ...item.gates, market: marketGate };
     const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", market: "BTC/piyasa" };
-    const failedGates = Object.entries(gates).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateLabels[key] || key }));
+    const gateDiagnostics = {
+      ...(item.gateDiagnostics || {}),
+      market: {
+        passed: marketGate,
+        label: "BTC/piyasa",
+        message: !dataSufficient ? `Tarama kapsamı %${finite(marketContext.coveragePct).toFixed(1)}/%70 gerekli.` : marketGateOpen ? (btcHealthy ? `BTC trend ve tazelik kapısı açık; piyasa genişliği %${finite(marketContext.breadthPct).toFixed(1)}.` : `Kripto piyasa genişliği %${finite(marketContext.breadthPct).toFixed(1)}/%45 kapısını geçti.`) : `BTC trendi uygun değil ve piyasa genişliği %${finite(marketContext.breadthPct).toFixed(1)}/%45 gerekli.`,
+      },
+    };
+    const failedGates = Object.entries(gates).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateLabels[key] || key, message: gateDiagnostics[key]?.message || `${gateLabels[key] || key} kapısı geçilmedi.` }));
     const reasons = [...item.reasons];
     if (!btcHealthy) reasons.push("BTC trend kapısı güçlü değil; altcoin sinyalleri piyasa genişliğiyle ayrıca sınırlandı.");
     if (!marketGateOpen) reasons.push("Kripto piyasa rejimi kapalı olduğu için YATIRMA.");
@@ -318,6 +398,7 @@
       failedGates,
       distanceToEligible: failedGates.length,
       gates,
+      gateDiagnostics,
       reasons,
     };
   }
@@ -334,7 +415,8 @@
         cursor += 1;
         try {
           const rows = options.histories?.get(asset.symbol) || await fetchCryptoHistory(asset, { ...options, now: options.now });
-          const analysis = engine.analyze(rows, profile);
+          const suite = engine.analyzeStrategies(rows, profile);
+          const analysis = { ...suite.selected, strategyComparisons: suite.strategies };
           results.push(buildCryptoRecommendation(asset, rows, analysis, { ...options, profile }));
         } catch (error) {
           errors.push({ symbol: asset.symbol, message: error instanceof Error ? error.message : String(error) });
@@ -361,12 +443,12 @@
     const btc = scanned.results.find((item) => item.symbol === "BTCUSDT");
     const btcHealthy = Boolean(btc && btc.trendDirection > 0 && btc.dataFresh);
     const marketGateOpen = dataSufficient && (btcHealthy || breadthPct >= 45);
-    const allRecommendations = scanned.results.map((item) => finalizeCryptoRecommendation(item, marketGateOpen, dataSufficient, btcHealthy))
+    const allRecommendations = scanned.results.map((item) => finalizeCryptoRecommendation(item, marketGateOpen, dataSufficient, btcHealthy, { coveragePct, breadthPct }))
       .sort((a, b) => Number(b.eligible) - Number(a.eligible) || Number(b.nearMiss) - Number(a.nearMiss) || b.rankScore - a.rankScore);
     const candidates = allRecommendations.filter((item) => item.eligible);
     const displayLimit = Math.max(12, Math.floor(finite(options.displayLimit, 30)));
     return {
-      version: 1,
+      version: 2,
       market: "crypto",
       mode: "fail-closed-recommendation",
       generatedAt: now.toISOString(),
@@ -398,6 +480,7 @@
     fetchCryptoHistory,
     dataAgeHours,
     buildCryptoOrderPlan,
+    buildCryptoOrderPlans,
     evaluateCrypto,
     buildCryptoRecommendation,
     finalizeCryptoRecommendation,

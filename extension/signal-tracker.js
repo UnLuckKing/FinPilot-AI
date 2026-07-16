@@ -21,6 +21,8 @@
       marketLabel: item.marketLabel || (item.market === "crypto" ? "KRİPTO" : "BIST"),
       symbol: item.symbol,
       displaySymbol: item.displaySymbol || item.symbol,
+      strategyId: item.strategy?.id || "legacy",
+      strategyLabel: item.strategy?.label || "Önceki sürüm",
       openedAt: now.toISOString(),
       signalDataDate: item.dataDate || null,
       entry: finite(plan.limitBuy),
@@ -92,5 +94,83 @@
     return { version: 1, updatedAt: now.toISOString(), records, stats: calculateStats(records), note: "Sonuçlar yalnızca tarama anlarındaki kapanmış fiyatlarla izlenir; gerçekleşen aracı kurum işlemi değildir." };
   }
 
-  return { MAX_RECORDS, keyOf, compactSignal, resolveRecord, calculateStats, updateHistory };
+  function performanceGuard(history, options = {}) {
+    const minimumResolved = Math.max(5, Math.floor(finite(options.minimumResolved, 12)));
+    const minimumWinRate = finite(options.minimumWinRate, 40);
+    const minimumAverageR = finite(options.minimumAverageR, 0);
+    const resolved = (history?.records || []).filter((record) => record.status === "STOP" || String(record.status || "").startsWith("HEDEF"));
+    const groups = new Map();
+    for (const record of resolved) {
+      const key = `${record.market || "bist"}:${record.strategyId || "legacy"}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(record);
+    }
+    const summaries = {};
+    for (const [key, records] of groups) {
+      const wins = records.filter((record) => String(record.status).startsWith("HEDEF")).length;
+      const totalR = records.reduce((sum, record) => sum + finite(record.resultR, 0), 0);
+      const winRate = records.length ? wins / records.length * 100 : null;
+      const averageR = records.length ? totalR / records.length : null;
+      const ready = records.length >= minimumResolved;
+      summaries[key] = {
+        key,
+        resolved: records.length,
+        wins,
+        winRate,
+        averageR,
+        ready,
+        passed: !ready || (winRate >= minimumWinRate && averageR >= minimumAverageR),
+      };
+    }
+    return { minimumResolved, minimumWinRate, minimumAverageR, summaries };
+  }
+
+  function applyPerformanceGuard(result, history, options = {}) {
+    const guard = performanceGuard(history, options);
+    const recommendations = (result?.recommendations || []).map((item) => {
+      const key = `${item.market || result?.market || "bist"}:${item.strategy?.id || "legacy"}`;
+      const summary = guard.summaries[key] || { resolved: 0, ready: false, passed: true, winRate: null, averageR: null };
+      const message = !summary.ready
+        ? `Koruma gözlemde: ${summary.resolved}/${guard.minimumResolved} sonuç; eşik dolana kadar karar engellenmez.`
+        : `Strateji geçmişi: kazanma %${summary.winRate.toFixed(1)}/%${guard.minimumWinRate} · ortalama ${summary.averageR.toFixed(2)}R/${guard.minimumAverageR.toFixed(2)}R.`;
+      const gates = { ...(item.gates || {}), performance: summary.passed };
+      const gateDiagnostics = { ...(item.gateDiagnostics || {}), performance: { passed: summary.passed, label: "Performans", message } };
+      if (summary.passed) return { ...item, gates, gateDiagnostics, performanceGuard: summary };
+      const failedGates = [...(item.failedGates || []).filter((gate) => gate.key !== "performance"), { key: "performance", label: "Performans", message }];
+      return {
+        ...item,
+        action: "YATIRMA",
+        eligible: false,
+        preEligible: false,
+        nearMiss: item.rankScore >= 55 && failedGates.length <= 3,
+        distanceToEligible: failedGates.length,
+        gates,
+        gateDiagnostics,
+        failedGates,
+        performanceGuard: summary,
+        reasons: [...(item.reasons || []), "Bu stratejinin izlenen sonuçları performans tabanının altına indi; yeni olumlu sinyal geçici olarak kilitlendi."],
+      };
+    });
+    const candidateCount = recommendations.filter((item) => item.eligible).length;
+    const market = result?.market || recommendations[0]?.market || "bist";
+    const marketDecision = candidateCount === finite(result?.candidateCount, 0)
+      ? result?.marketDecision
+      : candidateCount > 0
+        ? `YATIR · ${candidateCount} ${market === "crypto" ? "kripto" : "hisse"} performans korumasını geçti`
+        : "YATIRMA · performans koruması yeni sinyali durdurdu";
+    const snapshot = (result?.snapshot || []).map((snapshotItem) => {
+      const current = recommendations.find((item) => keyOf(item) === keyOf(snapshotItem));
+      return current ? { ...snapshotItem, eligible: current.eligible } : snapshotItem;
+    });
+    return {
+      ...result,
+      recommendations,
+      snapshot,
+      candidateCount,
+      marketDecision,
+      research: { ...(result?.research || {}), performanceGuard: guard },
+    };
+  }
+
+  return { MAX_RECORDS, keyOf, compactSignal, resolveRecord, calculateStats, updateHistory, performanceGuard, applyPerformanceGuard };
 });

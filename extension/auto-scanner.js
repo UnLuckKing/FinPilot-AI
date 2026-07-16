@@ -130,24 +130,38 @@
     return date.toISOString().slice(0, 10);
   }
 
-  function buildOrderPlan(rows, latest) {
+  function buildBistOrderCandidate(rows, latest, definition, preferred = false) {
+    const atr = Math.max(Number.EPSILON, finite(latest.atr));
     const tick = tickSizeForPrice(latest.close);
-    const lowerBound = latest.close - latest.atr * 0.75;
-    const upperBound = latest.close - latest.atr * 0.08;
-    const supportEntry = finite(latest.fast, latest.close) + latest.atr * 0.20;
-    const limitBuy = roundToTick(clamp(Math.min(latest.close - latest.atr * 0.12, supportEntry), lowerBound, upperBound), "down");
-    const recentLows = rows.slice(-10).map((row) => row.low).filter(Number.isFinite);
-    const swingLow = recentLows.length ? Math.min(...recentLows) : limitBuy - latest.atr * PROFILE.stopAtr;
-    const rawStop = Math.min(limitBuy - latest.atr * 1.60, swingLow - latest.atr * 0.10);
-    const stopTrigger = roundToTick(rawStop, "down");
-    const stopLimitBuffer = Math.max(latest.atr * 0.12, tick * 3);
+    const limitBuy = roundToTick(definition.entry, "down");
+    const stopTrigger = roundToTick(definition.stop, "down");
+    const stopLimitBuffer = Math.max(atr * 0.12, tick * 3);
     const stopLimit = roundToTick(stopTrigger - stopLimitBuffer, "down");
     const riskDistance = limitBuy - stopTrigger;
     const target1 = roundToTick(limitBuy + riskDistance * 1.50, "nearest");
     const target2 = roundToTick(limitBuy + riskDistance * 2.20, "nearest");
     const riskPct = limitBuy > 0 ? riskDistance / limitBuy * 100 : Infinity;
-    const valid = limitBuy > 0 && stopLimit > 0 && stopLimit < stopTrigger && stopTrigger < limitBuy && target1 > limitBuy && target2 > target1 && riskDistance >= latest.atr * 1.45 && riskDistance <= latest.atr * 2.80 && riskPct <= 9;
+    const riskAtr = riskDistance / atr;
+    const entryDistanceAtr = (finite(latest.close) - limitBuy) / atr;
+    const checks = {
+      ordering: limitBuy > 0 && stopLimit > 0 && stopLimit < stopTrigger && stopTrigger < limitBuy && target1 > limitBuy && target2 > target1,
+      atrRisk: riskAtr >= 1.45 && riskAtr <= 2.80,
+      riskPct: riskPct <= 9,
+      entryDistance: entryDistanceAtr >= 0.04 && entryDistanceAtr <= 1.05,
+    };
+    const failureReasons = [];
+    if (!checks.ordering) failureReasons.push("Fiyat sıralaması geçersiz: stop-limit < stop < alış < hedef koşulu sağlanmadı.");
+    if (!checks.atrRisk) failureReasons.push(`Stop mesafesi ${riskAtr.toFixed(2)} ATR; gerekli aralık 1.45–2.80 ATR.`);
+    if (!checks.riskPct) failureReasons.push(`Stop riski %${riskPct.toFixed(2)}; izin verilen üst sınır %9.00.`);
+    if (!checks.entryDistance) failureReasons.push(`Alış limiti son fiyattan ${entryDistanceAtr.toFixed(2)} ATR uzakta; gerekli aralık 0.04–1.05 ATR.`);
+    const valid = Object.values(checks).every(Boolean);
+    const quality = clamp(100 - Math.abs(riskAtr - 2.05) * 14 - Math.abs(entryDistanceAtr - 0.35) * 11 - Math.max(0, riskPct - 4) * 2 + (preferred ? 6 : 0) - failureReasons.length * 22, 0, 100);
     return {
+      id: definition.id,
+      label: definition.label,
+      explanation: definition.explanation,
+      preferred,
+      quality,
       valid,
       limitBuy,
       stopTrigger,
@@ -157,11 +171,60 @@
       target2,
       riskDistance,
       riskPct,
+      riskAtr,
+      entryDistanceAtr,
       rewardRisk1: riskDistance > 0 ? (target1 - limitBuy) / riskDistance : 0,
       rewardRisk2: riskDistance > 0 ? (target2 - limitBuy) / riskDistance : 0,
+      checks,
+      failureReasons,
       validUntil: nextBusinessDate(rows[rows.length - 1]?.time),
       warning: "Stop-limit emri sert fiyat boşluğunda gerçekleşmeyebilir; bu seviyeler gerçek emir değildir.",
     };
+  }
+
+  function buildOrderPlans(rows, latest, strategyId = "trend") {
+    const atr = Math.max(Number.EPSILON, finite(latest.atr));
+    const close = finite(latest.close);
+    const lowerBound = close - atr * 0.95;
+    const upperBound = close - atr * 0.06;
+    const recentLows = rows.slice(-10).map((row) => row.low).filter(Number.isFinite);
+    const swingLow = recentLows.length ? Math.min(...recentLows) : close - atr * PROFILE.stopAtr;
+    const supportEntry = clamp(Math.min(close - atr * 0.12, finite(latest.fast, close) + atr * 0.20), lowerBound, upperBound);
+    const emaEntry = clamp(finite(latest.fast, close) + atr * 0.08, lowerBound, upperBound);
+    const balancedEntry = clamp(close - atr * 0.24, lowerBound, upperBound);
+    const preferredId = strategyId === "pullback" ? "ema-retest" : strategyId === "trend" ? "support-pullback" : "atr-balanced";
+    const definitions = [
+      {
+        id: "support-pullback",
+        label: "Destek geri çekilmesi",
+        explanation: "Son destek ve hızlı ortalama çevresindeki geri çekilmeyi bekler.",
+        entry: supportEntry,
+        stop: Math.min(supportEntry - atr * 1.60, swingLow - atr * 0.10),
+      },
+      {
+        id: "ema-retest",
+        label: "EMA yeniden testi",
+        explanation: "Hızlı ortalamaya kontrollü dönüşten sonra yapısal stop kullanır.",
+        entry: emaEntry,
+        stop: Math.min(emaEntry - atr * 1.70, finite(latest.slow, emaEntry - atr * 1.55) - atr * 0.08),
+      },
+      {
+        id: "atr-balanced",
+        label: "ATR dengeli plan",
+        explanation: "Kırılım veya dönüş stratejisinde sabitlenmiş volatilite riski uygular.",
+        entry: balancedEntry,
+        stop: balancedEntry - atr * 2.05,
+      },
+    ];
+    return definitions
+      .map((definition) => buildBistOrderCandidate(rows, latest, definition, definition.id === preferredId))
+      .sort((a, b) => Number(b.valid) - Number(a.valid) || Number(b.preferred) - Number(a.preferred) || b.quality - a.quality);
+  }
+
+  function buildOrderPlan(rows, latest, strategyId = "trend") {
+    const alternatives = buildOrderPlans(rows, latest, strategyId);
+    const selected = alternatives[0];
+    return { ...selected, alternatives, validPlanCount: alternatives.filter((plan) => plan.valid).length };
   }
 
   function parseIsYatirimRows(payload) {
@@ -217,6 +280,23 @@
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   }
 
+  function sectorScoringProfile(sector) {
+    const normalized = String(sector || "Diğer").toLocaleLowerCase("tr-TR");
+    if (/banka|finans|sigorta|faktoring|leasing/.test(normalized)) {
+      return { id: "financial", label: "Banka / finans değerlemesi", weights: { pe: 35, priceToBook: 65 } };
+    }
+    if (/holding|yatırım ortaklığı|girişim sermayesi/.test(normalized)) {
+      return { id: "holding", label: "Holding / yatırım değerlemesi", weights: { pe: 25, evEbitda: 10, evSales: 20, priceToBook: 45 } };
+    }
+    if (/gayrimenkul|gmyo/.test(normalized)) {
+      return { id: "real-estate", label: "Gayrimenkul değerlemesi", weights: { pe: 20, evSales: 20, priceToBook: 60 } };
+    }
+    if (/teknoloji|yazılım|perakende|hizmet|iletişim|telekom/.test(normalized)) {
+      return { id: "growth-service", label: "Büyüme / hizmet değerlemesi", weights: { pe: 15, evEbitda: 25, evSales: 40, priceToBook: 20 } };
+    }
+    return { id: "industrial", label: "Sanayi değerlemesi", weights: { pe: 25, evEbitda: 40, evSales: 15, priceToBook: 20 } };
+  }
+
   function parseFundamentalsHtml(html) {
     const summaries = new Map();
     const ratios = new Map();
@@ -258,14 +338,17 @@
       const summary = summaries.get(symbol) || {};
       const ratio = ratios.get(symbol) || {};
       const peers = sectorValues.get(summary.sector || "Diğer") || {};
-      const weights = { pe: 30, evEbitda: 30, evSales: 15, priceToBook: 25 };
+      const scoringProfile = sectorScoringProfile(summary.sector || "Diğer");
+      const weights = scoringProfile.weights;
       let earned = 0;
       let possible = 0;
+      const peerMedians = {};
       for (const [key, weight] of Object.entries(weights)) {
         const value = ratio[key];
         if (!Number.isFinite(value)) continue;
         possible += weight;
         const peerMedian = median(peers[key] || []);
+        peerMedians[key] = peerMedian;
         if (value <= 0) continue;
         if (!Number.isFinite(peerMedian) || peerMedian <= 0) earned += weight * 0.5;
         else if (value <= peerMedian) earned += weight;
@@ -277,6 +360,10 @@
         available: Boolean(summaries.has(symbol) || ratios.has(symbol)),
         score,
         status: score >= 65 ? "Güçlü" : score >= 45 ? "Dengeli" : "Zayıf",
+        scoringModel: scoringProfile.label,
+        scoringProfile: scoringProfile.id,
+        scoringWeights: weights,
+        peerMedians,
         ...summary,
         ...ratio,
       });
@@ -535,22 +622,23 @@
     const directionScore = fiveDay?.available ? fiveDay.probabilityUp : 0;
     const fundamentalScore = fundamental?.available ? fundamental.score : 50;
     const watchEdge = backtest.totalTrades >= PROFILE.minimumTrades && backtest.profitFactor >= 1.15 && backtest.expectancyR > 0;
+    const backtestEdge = watchEdge && backtest.profitFactor >= PROFILE.minimumProfitFactor && backtest.expectancyR >= PROFILE.minimumExpectancyR;
     const modelEdge = analysis.model.available && analysis.model.probabilityUp >= PROFILE.minimumModelProbability && analysis.model.outOfSampleAccuracy >= 48 && analysis.model.brierScore <= PROFILE.maximumBrierScore;
     const fundamentalEdge = Boolean(fundamental?.available) && fundamental.score >= 38;
     const directionEdge = Boolean(fiveDay?.available) && fiveDay.probabilityUp >= PROFILE.minimumDirectionProbability && fiveDay.probabilityDown <= PROFILE.maximumDirectionDownProbability && fiveDay.expectedMedianPct > 0;
     const recentEdge = backtest.recentTrades >= 6 && backtest.recentExpectancyR > 0 && backtest.recentProfitFactor >= 1;
     const stressEdge = Boolean(backtest.stress?.available) && backtest.stress.profitablePct >= PROFILE.minimumStressProfitability;
-    const edge = watchEdge && backtest.profitFactor >= PROFILE.minimumProfitFactor && backtest.expectancyR >= PROFILE.minimumExpectancyR && modelEdge && fundamentalEdge && directionEdge && recentEdge && stressEdge;
+    const edge = backtestEdge && modelEdge && fundamentalEdge && directionEdge && recentEdge && stressEdge;
     let score = analysis.setupScore * 0.24 + analysis.estimatedProbability * 0.16 + profitFactorScore * 0.13 + expectancyScore * 0.09 + modelScore * 0.11 + fundamentalScore * 0.11 + directionScore * 0.16;
     if (analysis.decision === "LONG ADAYI") score += 10;
     else if (!watchEdge) score -= 18;
-    return { score: clamp(score, 0, 100), edge, watchEdge, modelEdge, fundamentalEdge, directionEdge, recentEdge, stressEdge };
+    return { score: clamp(score, 0, 100), edge, watchEdge, backtestEdge, modelEdge, fundamentalEdge, directionEdge, recentEdge, stressEdge };
   }
 
   function buildRecommendation(symbol, rows, analysis, fundamental, options = {}) {
     const latest = analysis.latest;
     const evaluation = scoreAnalysis(analysis, fundamental);
-    const orderPlan = buildOrderPlan(rows, latest);
+    const orderPlan = buildOrderPlan(rows, latest, analysis.strategy?.mode);
     const dataDate = rows[rows.length - 1].time;
     const dataAgeBusinessDays = businessDaysAge(dataDate, options.now || new Date());
     const dataFresh = dataAgeBusinessDays <= PROFILE.maximumDataAgeBusinessDays;
@@ -560,6 +648,56 @@
     const momentumAgent = analysis.agents.find((agent) => agent.name === "Momentum Ajanı");
     const forecasts = Object.fromEntries((analysis.forecasts || []).map((forecast) => [String(forecast.horizon), forecast]));
     const fiveDay = forecasts["5"];
+    const pfText = Number.isFinite(analysis.backtest.profitFactor) ? analysis.backtest.profitFactor.toFixed(2) : "∞";
+    const gateDiagnostics = {
+      setup: {
+        passed: analysis.decision === "LONG ADAYI",
+        label: "Kurulum",
+        message: `${analysis.strategy?.label || "Strateji"}: ${analysis.setupScore.toFixed(0)}/${finite(analysis.strategy?.threshold, PROFILE.threshold).toFixed(0)}; rejim ${analysis.strategy?.regime ? "uygun" : "uygun değil"}.`,
+      },
+      backtest: {
+        passed: evaluation.backtestEdge,
+        label: "Backtest",
+        message: `${analysis.backtest.totalTrades}/${PROFILE.minimumTrades} işlem · PF ${pfText}/${PROFILE.minimumProfitFactor.toFixed(2)} · beklenti ${analysis.backtest.expectancyR.toFixed(2)}R/${PROFILE.minimumExpectancyR.toFixed(2)}R.`,
+      },
+      model: {
+        passed: evaluation.modelEdge,
+        label: "ML",
+        message: analysis.model.available ? `Yükseliş %${analysis.model.probabilityUp.toFixed(1)}/%${PROFILE.minimumModelProbability} · doğruluk %${analysis.model.outOfSampleAccuracy.toFixed(1)}/%48 · Brier ${analysis.model.brierScore.toFixed(3)}/${PROFILE.maximumBrierScore.toFixed(2)} azami.` : "ML modeli için yeterli kronolojik örnek yok.",
+      },
+      fundamental: {
+        passed: evaluation.fundamentalEdge,
+        label: "Temel",
+        message: fundamental?.available ? `${fundamental.scoringModel || "Sektör değerlemesi"}: ${fundamental.score.toFixed(0)}/38 gerekli.` : "Temel değerleme doğrulanamadı; fail-closed kapı kapalı.",
+      },
+      direction: {
+        passed: evaluation.directionEdge,
+        label: "Yön",
+        message: fiveDay?.available ? `5 gün yükseliş %${fiveDay.probabilityUp.toFixed(1)}/%${PROFILE.minimumDirectionProbability} · düşüş %${fiveDay.probabilityDown.toFixed(1)}/%${PROFILE.maximumDirectionDownProbability} azami · medyan %${fiveDay.expectedMedianPct.toFixed(2)}.` : "5 günlük yön örneği yetersiz.",
+      },
+      recentRegime: {
+        passed: evaluation.recentEdge,
+        label: "Yakın dönem",
+        message: `${analysis.backtest.recentTrades}/6 işlem · PF ${analysis.backtest.recentProfitFactor.toFixed(2)}/1.00 · beklenti ${analysis.backtest.recentExpectancyR.toFixed(2)}R/>0R.`,
+      },
+      stress: {
+        passed: evaluation.stressEdge,
+        label: "Stres",
+        message: analysis.backtest.stress?.available ? `Pozitif senaryo %${analysis.backtest.stress.profitablePct.toFixed(1)}/%${PROFILE.minimumStressProfitability}.` : "Stres testi için en az 8 işlem gerekli.",
+      },
+      orderPlan: {
+        passed: orderPlan.valid,
+        label: "Emir planı",
+        message: orderPlan.valid ? `${orderPlan.label}: 3 plandan ${orderPlan.validPlanCount} tanesi geçerli; risk ${orderPlan.riskAtr.toFixed(2)} ATR ve %${orderPlan.riskPct.toFixed(2)}.` : (orderPlan.failureReasons || ["Üç emir planı da risk sınırlarını geçemedi."]).join(" "),
+      },
+      dataFresh: {
+        passed: dataFresh,
+        label: "Tazelik",
+        message: `Veri yaşı ${dataAgeBusinessDays} iş günü; azami ${PROFILE.maximumDataAgeBusinessDays}.`,
+      },
+      kap: { passed: false, label: "KAP", message: "KAP derin kontrolü bekleniyor." },
+      market: { passed: false, label: "Piyasa", message: "Piyasa genişliği tarama sonunda hesaplanacak." },
+    };
     return {
       market: "bist",
       marketLabel: "BIST",
@@ -601,6 +739,14 @@
       ],
       direction: fiveDay?.available ? fiveDay.direction : "BELİRSİZ",
       confidence: analysis.probabilityLabel,
+      strategy: {
+        id: analysis.strategy?.mode || "trend",
+        label: analysis.strategy?.label || "Trend devamı",
+        threshold: analysis.strategy?.threshold,
+        score: analysis.strategy?.score,
+        selectionScore: analysis.selectionScore,
+        comparisons: analysis.strategyComparisons || [],
+      },
       orderPlan,
       levels: {
         watchLow: orderPlan.limitBuy,
@@ -614,7 +760,7 @@
       },
       gates: {
         setup: analysis.decision === "LONG ADAYI",
-        backtest: evaluation.watchEdge,
+        backtest: evaluation.backtestEdge,
         model: evaluation.modelEdge,
         fundamental: evaluation.fundamentalEdge,
         direction: evaluation.directionEdge,
@@ -625,15 +771,17 @@
         kap: false,
         market: false,
       },
+      gateDiagnostics,
       reasons: [
+        `Seçilen yaklaşım: ${analysis.strategy?.label || "Trend devamı"}; ${analysis.strategyComparisons?.length || 1} strateji aynı veri üzerinde ayrı backtest edildi.`,
         trendAgent?.detail || "Trend verisi hesaplandı.",
         momentumAgent?.detail || "Momentum verisi hesaplandı.",
         evaluation.watchEdge ? "Masraflar sonrası geçmiş test pozitif beklenti gösteriyor." : "Masraflar sonrası geçmiş test yeterli avantaj göstermiyor.",
         analysis.model.available ? `Yerel ML yükseliş olasılığı %${analysis.model.probabilityUp.toFixed(1)}; kronolojik test doğruluğu %${analysis.model.outOfSampleAccuracy.toFixed(1)}.` : "Yerel ML için veri yetersiz.",
         fiveDay?.available ? `5 işlem günü yön modeli: yükseliş %${fiveDay.probabilityUp.toFixed(1)}, düşüş %${fiveDay.probabilityDown.toFixed(1)}, yatay %${fiveDay.probabilityFlat.toFixed(1)}; beklenen orta hareket %${fiveDay.expectedMedianPct.toFixed(2)}.` : "5 günlük yön modeli için yeterli benzer dönem bulunamadı.",
-        fundamental?.available ? `${fundamental.sector || "Sektör"}: değerleme puanı ${fundamental.score.toFixed(0)}/100 (${fundamental.status}); F/K ${Number.isFinite(fundamental.pe) ? fundamental.pe.toFixed(1) : "—"}, PD/DD ${Number.isFinite(fundamental.priceToBook) ? fundamental.priceToBook.toFixed(1) : "—"}.` : "Temel değerleme tablosu alınamadı; sonuç yalnızca teknik, backtest ve ML kontrollerine dayanıyor.",
+        fundamental?.available ? `${fundamental.sector || "Sektör"}: ${fundamental.scoringModel || "sektör değerlemesi"} puanı ${fundamental.score.toFixed(0)}/100 (${fundamental.status}); F/K ${Number.isFinite(fundamental.pe) ? fundamental.pe.toFixed(1) : "—"}, PD/DD ${Number.isFinite(fundamental.priceToBook) ? fundamental.priceToBook.toFixed(1) : "—"}.` : "Temel değerleme tablosu alınamadı; sonuç yalnızca teknik, backtest ve ML kontrollerine dayanıyor.",
         analysis.backtest.stress?.available ? `Monte Carlo stres testi pozitif kapanış oranı %${analysis.backtest.stress.profitablePct.toFixed(1)}; kötü %10 senaryo ${analysis.backtest.stress.p10NetR.toFixed(2)}R.` : "Stres testi için işlem sayısı yetersiz.",
-        orderPlan.valid ? `Alış limiti ve stop planı BIST fiyat adımlarına yuvarlandı; hedef 2 risk/getiri ${orderPlan.rewardRisk2.toFixed(2)}R.` : "Teknik yapıya uygun, sınırlandırılmış bir stop planı üretilemedi.",
+        orderPlan.valid ? `${orderPlan.label} seçildi; 3 plandan ${orderPlan.validPlanCount} tanesi sınırları geçti ve hedef 2 risk/getiri ${orderPlan.rewardRisk2.toFixed(2)}R.` : `Üç emir planı da geçemedi: ${(orderPlan.failureReasons || []).join(" ")}`,
         dataFresh ? `Fiyat verisi ${dataAgeBusinessDays} iş günü yaşında; tazelik kapısı açık.` : `Fiyat verisi ${dataAgeBusinessDays} iş günü yaşında; tazelik kapısı kapalı.`,
         evaluation.edge ? "Teknik, temel, ML, yön, yakın dönem ve stres kapıları birlikte geçti." : "Sıkı güvenlik kapılarının tamamı birlikte geçilmedi.",
       ],
@@ -645,7 +793,7 @@
     };
   }
 
-  function finalizeRecommendation(item, kap, marketGateOpen, dataSufficient) {
+  function finalizeRecommendation(item, kap, marketGateOpen, dataSufficient, marketContext = {}) {
     const kapResult = kap || { available: false, blocked: true, status: "KAP doğrulanamadı" };
     const kapGate = Boolean(kapResult.available) && !kapResult.blocked;
     const marketGate = Boolean(marketGateOpen) && Boolean(dataSufficient);
@@ -658,7 +806,20 @@
     if (!dataSufficient) reasons.push("Tarama kapsamı yetersiz olduğu için YATIRMA.");
     const gates = { ...item.gates, kap: kapGate, market: marketGate };
     const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
-    const failedGates = Object.entries(gates).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateLabels[key] || key }));
+    const gateDiagnostics = {
+      ...(item.gateDiagnostics || {}),
+      kap: {
+        passed: kapGate,
+        label: "KAP",
+        message: !kapResult.available ? "KAP güncel akışı doğrulanamadı." : kapResult.blocked ? `KAP risk işareti: ${kapResult.recentRisks?.map((risk) => risk.label).join(", ") || kapResult.status}.` : `KAP açık: son 7 iş gününde tanımlı risk yok; ${kapResult.recentEventCount || 0} bildirim incelendi.`,
+      },
+      market: {
+        passed: marketGate,
+        label: "Piyasa",
+        message: !dataSufficient ? `Tarama kapsamı %${finite(marketContext.coveragePct).toFixed(1)}/%70 gerekli.` : marketGateOpen ? `Pozitif trend genişliği %${finite(marketContext.breadthPct).toFixed(1)}; %35 kapısı açık.` : `Pozitif trend genişliği %${finite(marketContext.breadthPct).toFixed(1)}/%35 gerekli.`,
+      },
+    };
+    const failedGates = Object.entries(gates).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateLabels[key] || key, message: gateDiagnostics[key]?.message || `${gateLabels[key] || key} kapısı geçilmedi.` }));
     return {
       ...item,
       action: eligible ? "YATIR" : "YATIRMA",
@@ -668,6 +829,7 @@
       distanceToEligible: failedGates.length,
       kap: kapResult,
       gates,
+      gateDiagnostics,
       reasons,
       links: { ...item.links, kap: kapResult.searchUrl || kapResult.companyUrl || KAP_DISCLOSURE_SEARCH },
     };
@@ -686,7 +848,8 @@
         const symbol = queue[index];
         try {
           const rows = await fetchHistory(symbol, options);
-          const analysis = engine.analyze(rows, { ...PROFILE, ...(options.profile || {}) });
+          const suite = engine.analyzeStrategies(rows, { ...PROFILE, ...(options.profile || {}) });
+          const analysis = { ...suite.selected, strategyComparisons: suite.strategies };
           results.push(buildRecommendation(symbol, rows, analysis, options.fundamentals?.get(symbol), options));
         } catch (error) {
           errors.push({ symbol, message: error instanceof Error ? error.message : String(error) });
@@ -759,12 +922,14 @@
       kapResults.get(item.symbol) || { available: false, blocked: true, status: item.preEligible ? "KAP doğrulanamadı" : "Derin araştırmaya seçilmedi" },
       marketGateOpen,
       dataSufficient,
+      { coveragePct, breadthPct: marketBreadthPct },
     )).sort((a, b) => Number(b.eligible) - Number(a.eligible) || b.rankScore - a.rankScore);
     const candidates = recommendations.filter((item) => item.eligible);
     const latestDates = recommendations.map((item) => item.dataDate).filter(Boolean).sort();
     const warnings = [...(fundamentalResult.warning ? [{ symbol: "TEMEL VERİ", message: fundamentalResult.warning }] : []), ...kapWarnings];
     return {
-      version: 3,
+      version: 4,
+      market: "bist",
       mode: "fail-closed-recommendation",
       generatedAt: now.toISOString(),
       dataAsOf: latestDates.at(-1) || null,
@@ -808,6 +973,7 @@
     parseDate,
     parseIsYatirimRows,
     parseFundamentalsHtml,
+    sectorScoringProfile,
     parseKapDirectoryHtml,
     parseKapMemberId,
     parseKapDisclosuresHtml,
@@ -817,6 +983,7 @@
     roundToTick,
     businessDaysAge,
     buildOrderPlan,
+    buildOrderPlans,
     fetchFundamentals,
     fetchUniverse,
     fetchHistory,

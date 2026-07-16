@@ -53,6 +53,8 @@ const plan = scanner.buildCryptoOrderPlan(btcRows, analysis.latest, universe[0])
 assert.ok(plan.stopLimit < plan.stopTrigger);
 assert.ok(plan.stopTrigger < plan.limitBuy);
 assert.ok(plan.target2 > plan.target1);
+assert.equal(plan.alternatives.length, 3);
+assert.ok(plan.validPlanCount >= 1);
 
 const eligibleFixture = scanner.finalizeCryptoRecommendation({ preEligible: true, rankScore: 80, reasons: [], gates: {} }, true, true, true);
 assert.equal(eligibleFixture.action, "YATIR");
@@ -72,6 +74,9 @@ assert.ok(blockedFixture.failedGates.some((gate) => gate.key === "liquidity"));
   assert.deepEqual(Object.keys(result.recommendations[0].forecasts).sort(), ["1", "42", "6"]);
   assert.deepEqual(result.recommendations[0].forecastDisplay.map((item) => item.label), ["4 SAAT", "1 GÜN", "7 GÜN"]);
   assert.ok(["YATIR", "YATIRMA"].includes(result.recommendations[0].action));
+  assert.equal(result.recommendations[0].strategy.comparisons.length, 4);
+  assert.equal(result.recommendations[0].orderPlan.alternatives.length, 3);
+  assert.ok(Object.values(result.recommendations[0].gateDiagnostics).every((gate) => typeof gate.message === "string"));
   console.log("FinPilot crypto scanner checks: OK");
 })().catch((error) => {
   console.error(error);

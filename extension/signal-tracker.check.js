@@ -16,4 +16,13 @@ assert.ok(second.records.some((item) => item.status === "HEDEF 1"));
 assert.ok(second.records.some((item) => item.status === "STOP"));
 const duplicateGuard = tracker.updateHistory(second, { recommendations: [signal("bist", "THYAO", 300, 290, 315, 322)], snapshot: [] }, new Date("2026-07-17T12:00:00Z"));
 assert.equal(duplicateGuard.records.length, 2);
+
+const losingHistory = { records: Array.from({ length: 12 }, (_, index) => ({ id: `loss-${index}`, market: "bist", strategyId: "trend", status: "STOP", resultR: -1 })) };
+const guard = tracker.performanceGuard(losingHistory);
+assert.equal(guard.summaries["bist:trend"].ready, true);
+assert.equal(guard.summaries["bist:trend"].passed, false);
+const guarded = tracker.applyPerformanceGuard({ candidateCount: 1, marketDecision: "YATIR · 1 hisse", recommendations: [{ market: "bist", symbol: "ASELS", eligible: true, preEligible: true, action: "YATIR", rankScore: 80, strategy: { id: "trend", label: "Trend devamı" }, gates: {}, failedGates: [], reasons: [] }], snapshot: [{ market: "bist", symbol: "ASELS", eligible: true }] }, losingHistory);
+assert.equal(guarded.candidateCount, 0);
+assert.equal(guarded.recommendations[0].gates.performance, false);
+assert.ok(guarded.recommendations[0].failedGates.some((gate) => gate.key === "performance"));
 console.log("FinPilot signal tracker checks: OK");
