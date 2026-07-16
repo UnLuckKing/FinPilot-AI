@@ -23,10 +23,15 @@ const tickers = [
   { symbol: "BTCUPUSDT", lastPrice: "12", quoteVolume: "90000000", count: 80000, priceChangePercent: "8" },
   { symbol: "LOWUSDT", lastPrice: "0.2", quoteVolume: "1000", count: 40, priceChangePercent: "2" },
 ];
+const bookTickers = [
+  { symbol: "BTCUSDT", bidPrice: "117999", askPrice: "118001" },
+  { symbol: "ETHUSDT", bidPrice: "3899.8", askPrice: "3900.2" },
+];
 
-const universe = scanner.parseCryptoUniverse(exchangeInfo, tickers);
+const universe = scanner.parseCryptoUniverse(exchangeInfo, tickers, { bookTickers });
 assert.deepEqual(universe.map((item) => item.symbol), ["BTCUSDT", "ETHUSDT"]);
 assert.equal(universe[0].tickSize, 0.01);
+assert.ok(universe[0].spreadBps > 0 && universe[0].spreadBps < 1);
 assert.equal(scanner.roundToStep(123.456, 0.01, "down"), 123.45);
 assert.equal(scanner.roundToStep(0.12345678, 0.000001, "up"), 0.123457);
 
@@ -63,8 +68,9 @@ assert.equal(blockedFixture.action, "YATIRMA");
 assert.ok(blockedFixture.failedGates.some((gate) => gate.key === "liquidity"));
 
 (async () => {
-  const provided = await scanner.fetchCryptoUniverse({ exchangeInfo, tickers });
+  const provided = await scanner.fetchCryptoUniverse({ exchangeInfo, tickers, bookTickers });
   assert.equal(provided.assets.length, 2);
+  assert.ok(Number.isFinite(provided.assets[0].spreadBps));
   const histories = new Map([["BTCUSDT", btcRows], ["ETHUSDT", ethRows]]);
   const result = await scanner.runScan({ assets: universe, histories, now, displayLimit: 30 });
   assert.equal(result.market, "crypto");
@@ -78,6 +84,8 @@ assert.ok(blockedFixture.failedGates.some((gate) => gate.key === "liquidity"));
   assert.ok(result.recommendations[0].validation);
   assert.ok(result.recommendations[0].returnSignature.length >= 30);
   assert.ok(result.recommendations[0].currentBar.high >= result.recommendations[0].currentBar.low);
+  assert.ok(Number.isFinite(result.recommendations[0].spreadBps));
+  assert.equal(typeof result.recommendations[0].gates.executionQuality, "boolean");
   assert.equal(result.recommendations[0].orderPlan.alternatives.length, 3);
   assert.ok(Object.values(result.recommendations[0].gateDiagnostics).every((gate) => typeof gate.message === "string"));
   console.log("FinPilot crypto scanner checks: OK");

@@ -8,17 +8,22 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">F</span><div><b>FinPilot v3 Evidence Engine</b><small>BIST + Binance spot araştırma ve kâğıt işlem motoru</small></div></div>
+    <div class="brand"><span class="brand-mark">F</span><div><b>FinPilot v3.1 Ultimate Research</b><small>BIST + Binance + TradingView Ultimate kanıt motoru</small></div></div>
     <span class="live-dot" id="pageStatus">Hazır</span>
   </header>
 
   <main>
     <section class="hero">
-      <div class="source-line"><span>ÜCRETSİZ PİYASA VERİLERİ</span><b>İş Yatırım · KAP · Binance</b></div>
-      <h1>Hisse ve kriptoyu tarar.<br><em>Geçmeyen kapıyı açıklar.</em></h1>
-      <p>Dört stratejiyi rejime göre yarıştırır; walk-forward, aşırı uyum, KAP olayları ve portföy korelasyonunu geçmeyen varlığa YATIR demez. Geçen limitleri otomatik kâğıt işlemle izler.</p>
+      <div class="source-line"><span>ÇOKLU KANIT MOTORU</span><b>İş Yatırım · KAP · Binance · TradingView</b></div>
+      <h1>Piyasayı tarar, veriyi sınar.<br><em>Kararın neden değiştiğini söyler.</em></h1>
+      <p>Veri karantinası, üç zaman dilimi, göreli güç, walk-forward, model sağlığı ve portföy stresini birlikte geçmeyen varlığa YATIR demez. Geçen limitleri otomatik kâğıt işlemle izler.</p>
       <button class="scan-button" id="runScan"><span>✦</span><b>ŞİMDİ TÜM PİYASALARI ARAŞTIR</b><small>Tek tık · manuel fiyat veya CSV yok</small></button>
       <div class="auto-note"><i></i><span>Chrome açıkken 4 saatte bir kapanmış verilerle yenilenir.</span></div>
+    </section>
+
+    <section class="capital-control">
+      <div><small>TEK İSTEĞE BAĞLI AYAR</small><b>Kâğıt sermaye</b><span>Adet, azami TL kayıp ve portföy stresi otomatik hesaplanır.</span></div>
+      <label><span>₺</span><input id="paperCapital" type="number" min="1000" max="100000000" step="1000" value="100000" inputmode="decimal" aria-label="Kâğıt sermaye"></label>
     </section>
 
     <section class="progress-card" id="progressCard" hidden>
@@ -47,6 +52,9 @@
         <article><span>KAP doğrulanan</span><b id="kapCheckedCount">—</b></article>
         <article><span>A kanıt notu</span><b id="evidenceACount">—</b></article>
         <article><span>Açık kâğıt emir</span><b id="paperOpenCount">—</b></article>
+        <article><span>Sağlıklı veri</span><b id="dataHealthCount">—</b></article>
+        <article><span>Model sağlığı</span><b id="modelHealthStatus">—</b></article>
+        <article><span>Stres riski</span><b id="portfolioStressPct">—</b></article>
         <article><span>Çalışma modu</span><b>Kapı geçmezse YATIRMA</b></article>
       </section>
 
@@ -56,11 +64,13 @@
         <button id="tabCrypto" class="market-tab" type="button">Kripto <b id="cryptoCount">0</b></button>
         <button id="tabWatch" class="market-tab" type="button">Takip <b id="watchCount">0</b></button>
         <button id="tabHistory" class="market-tab" type="button">Geçmiş <b id="historyCount">0</b></button>
+        <button id="tabJournal" class="market-tab" type="button">Günlük <b id="journalCount">0</b></button>
       </nav>
 
       <div class="section-head"><div><small>SIRALAMA</small><h2 id="recommendationTitle">En güçlü varlıklar</h2></div><span id="universeLabel">BIST + Kripto</span></div>
       <section class="recommendations" id="recommendations"></section>
       <section class="history-panel" id="historyPanel" hidden></section>
+      <section class="journal-panel" id="journalPanel" hidden></section>
 
       <details class="error-details" id="errorDetails" hidden>
         <summary><span id="errorCount">0</span> veri uyarısı</summary>
@@ -69,7 +79,7 @@
     </div>
 
     <section class="method-card">
-      <div class="method-title"><span>16</span><div><small>KANIT VE RİSK KATMANI</small><h2>v3 kararı nasıl oluşuyor?</h2></div></div>
+      <div class="method-title"><span>22</span><div><small>KANIT VE RİSK KATMANI</small><h2>v3.1 kararı nasıl oluşuyor?</h2></div></div>
       <div class="method-list">
         <p><i>1</i><span><b>Veri</b> · Tazelik ve kapsam</span></p>
         <p><i>2</i><span><b>Rejim</b> · Trend/yatay/risk-off</span></p>
@@ -87,6 +97,12 @@
         <p><i>14</i><span><b>Emir</b> · 3 limit/stop planı</span></p>
         <p><i>15</i><span><b>Portföy</b> · Korelasyon/yoğunluk</span></p>
         <p><i>16</i><span><b>Kâğıt sonuç</b> · Bozulan modeli kilitle</span></p>
+        <p><i>17</i><span><b>Veri sağlığı</b> · Hatalı mumu karantinaya al</span></p>
+        <p><i>18</i><span><b>Çoklu zaman</b> · Gün/hafta/ay teyidi</span></p>
+        <p><i>19</i><span><b>Göreli güç</b> · Piyasa/BTC karşılaştırması</span></p>
+        <p><i>20</i><span><b>İşlem kalitesi</b> · Spread ve kayma koruması</span></p>
+        <p><i>21</i><span><b>Pozisyon</b> · Adet ve azami TL kayıp</span></p>
+        <p><i>22</i><span><b>Karar günlüğü</b> · Ne değişti / ne gerekli</span></p>
       </div>
     </section>
 
@@ -100,6 +116,7 @@
   <script src="market-aggregator.js"></script>
   <script src="signal-tracker.js"></script>
   <script src="portfolio-risk.js"></script>
+  <script src="decision-intelligence.js"></script>
   <script src="near-watch.js"></script>
   <script src="panel.js"></script>
 </body>

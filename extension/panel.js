@@ -5,6 +5,7 @@ const fmt = (value, digits = 2) => Number(value || 0).toLocaleString("tr-TR", { 
 const percent = (value, digits = 1) => value == null ? "—" : `%${fmt(value, digits)}`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 let progressTimer = null;
+let capitalTimer = null;
 let currentResult = null;
 let activeTab = "all";
 
@@ -13,9 +14,9 @@ function setStatus(text, error = false) {
   $("pageStatus").style.color = error ? "#ff7089" : "#5bea96";
 }
 
-function sendMessage(type) {
+function sendMessage(type, payload = {}) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ type }, (response) => {
+    chrome.runtime.sendMessage({ type, ...payload }, (response) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve(response);
     });
@@ -61,10 +62,20 @@ function formatPrice(item, value) {
   return `${item.market === "crypto" ? "$" : "₺"}${fmt(value, digits)}`;
 }
 
+function formatMoney(value) {
+  return Number.isFinite(Number(value)) ? `₺${fmt(value, 0)}` : "—";
+}
+
+function formatQuantity(item, value) {
+  if (!Number.isFinite(Number(value))) return "—";
+  return item.market === "crypto" ? fmt(value, 6) : fmt(value, 0);
+}
+
 function forecastCard(forecast, label) {
   if (!forecast?.available) return `<div class="forecast unavailable"><span>${escapeHtml(label)}</span><b>BELİRSİZ</b><small>Örnek yetersiz</small></div>`;
   const tone = forecast.direction === "YÜKSELİŞ" ? "up" : forecast.direction === "DÜŞÜŞ" ? "down" : "flat";
-  return `<div class="forecast ${tone}"><span>${escapeHtml(label)}</span><b>${escapeHtml(forecast.direction)}</b><small><i>↑ ${percent(forecast.probabilityUp, 0)}</i><i>↓ ${percent(forecast.probabilityDown, 0)}</i><i>→ ${percent(forecast.probabilityFlat, 0)}</i></small><em>Beklenen ${signedPercent(forecast.expectedLowPct)} – ${signedPercent(forecast.expectedHighPct)}</em></div>`;
+  const unreliable = forecast.reliable === false;
+  return `<div class="forecast ${tone} ${unreliable ? "unreliable" : ""}"><span>${escapeHtml(label)}</span><b>${escapeHtml(forecast.direction)}</b><small><i>↑ ${percent(forecast.probabilityUp, 0)}</i><i>↓ ${percent(forecast.probabilityDown, 0)}</i><i>→ ${percent(forecast.probabilityFlat, 0)}</i></small><em>Beklenen ${signedPercent(forecast.expectedLowPct)} – ${signedPercent(forecast.expectedHighPct)}</em>${unreliable ? `<strong>⚠ ARALIK ÇOK GENİŞ</strong>` : ""}</div>`;
 }
 
 function metricCells(item) {
@@ -84,9 +95,14 @@ function metricCells(item) {
     ["Yakın beklenti", `${fmt(item.recentExpectancyR, 2)}R`],
     ["ML ham yükseliş", percent(item.modelProbabilityUp)],
     ["Stres pozitif", stressScore],
+    ["Çoklu zaman", item.multiTimeframe?.available ? `%${fmt(item.multiTimeframe.alignmentScore, 0)} ${item.multiTimeframe.passed ? "uyumlu" : "çelişkili"}` : "—"],
+    ["Göreli güç", item.relativeStrength?.available ? `%${fmt(item.relativeStrength.percentile20, 0)} yüzdelik` : "—"],
+    ["Veri sağlığı", item.dataHealth ? `${fmt(item.dataHealth.score, 0)}/100 ${item.dataHealth.status || ""}` : "—"],
+    ["Önerilen adet", formatQuantity(item, item.positionSizing?.quantity)],
+    ["Azami TL kayıp", formatMoney(item.positionSizing?.maxLoss)],
   ];
   const special = item.market === "crypto"
-    ? [["24s hacim", `$${fmt((item.quoteVolume24h || 0) / 1_000_000, 0)}M`], ["24s hareket", signedPercent(item.priceChangePct24h, 1)]]
+    ? [["24s hacim", `$${fmt((item.quoteVolume24h || 0) / 1_000_000, 0)}M`], ["24s hareket", signedPercent(item.priceChangePct24h, 1)], ["Alış/satış farkı", Number.isFinite(item.spreadBps) ? `${fmt(item.spreadBps, 1)} bp` : "—"]]
     : [["Temel puan", item.fundamental?.available ? `${Math.round(item.fundamental.score)}/100` : "—"], ["KAP", item.kap?.available ? item.kap.status : "Doğrulanamadı"]];
   return [...common, ...special].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
 }
@@ -104,6 +120,10 @@ function evidencePanel(item) {
   const paper = paperRecordFor(item);
   const kapEvents = item.kap?.eventIntelligence;
   const grade = item.evidenceGrade || validation.evidenceGrade || "D";
+  const selectedGrade = validation.selectedEvidenceGrade || grade;
+  const overallGrade = validation.overallEvidenceGrade || grade;
+  const requiredOos = validation.requiredOosTrades || 12;
+  const oosTrades = validation.oos?.trades || 0;
   const pboText = pbo.available ? percent(pbo.value * 100, 0) : "—";
   const dsrText = dsr.available ? percent(dsr.probability * 100, 0) : "—";
   const correlation = Number.isFinite(portfolio.maxCorrelation) ? `${fmt(portfolio.maxCorrelation, 2)}${portfolio.correlatedWith ? ` · ${portfolio.correlatedWith}` : ""}` : "—";
@@ -114,8 +134,8 @@ function evidencePanel(item) {
     ? `<div class="paper-state"><span>KÂĞIT EMİR</span><b>${escapeHtml(paper.status)}</b><em>${paper.status === "EMİR BEKLİYOR" ? `Limit ${formatPrice(item, paper.entry)} henüz dolmadı` : `Dolum ${formatPrice(item, paper.fillPrice)} · stop ${formatPrice(item, paper.currentStop)}`}</em></div>`
     : "";
   return `<section class="evidence-panel grade-${escapeHtml(grade.toLowerCase())}">
-    <div class="evidence-head"><div><span>KANIT DOSYASI v3</span><b>Not ${escapeHtml(grade)}</b></div><em>${escapeHtml(validation.overfitRisk || "BELİRSİZ")} aşırı uyum</em></div>
-    <div class="evidence-grid"><div><span>Walk-forward</span><b>${validation.foldCount || 0} dönem</b></div><div><span>PBO</span><b>${pboText}</b></div><div><span>Deflated Sharpe</span><b>${dsrText}</b></div><div><span>Rejim</span><b>${escapeHtml(item.regime?.label || "Belirsiz")}</b></div><div><span>Rakip model</span><b>${escapeHtml(item.challenger?.label || "—")}</b></div><div><span>Korelasyon</span><b>${escapeHtml(correlation)}</b></div></div>
+    <div class="evidence-head"><div><span>KANIT DOSYASI v3.1</span><b>Nihai ${escapeHtml(grade)}</b></div><em>${escapeHtml(validation.overfitRisk || "BELİRSİZ")} aşırı uyum</em></div>
+    <div class="evidence-grid"><div><span>Dönem dışı örnek</span><b>${oosTrades}/${requiredOos}</b></div><div><span>Seçilen / genel</span><b>${escapeHtml(selectedGrade)} / ${escapeHtml(overallGrade)}</b></div><div><span>Walk-forward</span><b>${validation.foldCount || 0} dönem</b></div><div><span>PBO</span><b>${pboText}</b></div><div><span>Deflated Sharpe</span><b>${dsrText}</b></div><div><span>Rejim</span><b>${escapeHtml(item.regime?.label || "Belirsiz")}</b></div><div><span>Rakip model</span><b>${escapeHtml(item.challenger?.label || "—")}</b></div><div><span>Korelasyon</span><b>${escapeHtml(correlation)}</b></div><div><span>Model sağlığı</span><b>${escapeHtml(item.modelHealth?.status || "ISINIYOR")}</b></div></div>
     ${item.decisionDelta ? `<div class="evidence-note"><b>KARAR FARKI</b><span>${escapeHtml(item.decisionDelta)}</span></div>` : ""}
     ${kapLine}${paperLine}
   </section>`;
@@ -124,7 +144,7 @@ function evidencePanel(item) {
 function recommendationCard(item, index) {
   const actionClass = item.eligible ? "candidate" : item.nearMiss ? "watch" : "blocked";
   const order = item.orderPlan || item.levels || {};
-  const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: item.market === "crypto" ? "BTC/piyasa" : "Piyasa", performance: "Kâğıt performans", portfolio: "Portföy riski" };
+  const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", dataHealth: "Veri sağlığı", multiTimeframe: "Çoklu zaman", forecastReliability: "Tahmin güveni", relativeStrength: "Göreli güç", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Monte Carlo", liquidity: "Likidite/pump", executionQuality: "İşlem kalitesi", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: item.market === "crypto" ? "BTC/piyasa" : "Piyasa", performance: "Kâğıt performans", modelHealth: "Model sağlığı", portfolio: "Portföy riski", portfolioStress: "Portföy stresi" };
   const gates = Object.entries(item.gates || {}).map(([name, passed]) => `<span class="gate ${passed ? "pass" : "fail"}">${passed ? "✓" : "×"} ${escapeHtml(gateNames[name] || name)}</span>`).join("");
   const failedItems = item.failedGates || Object.entries(item.gates || {}).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateNames[key] || key }));
   const failedMessages = failedItems.map((gate) => gate.message || item.gateDiagnostics?.[gate.key]?.message || gate.label).filter(Boolean);
@@ -133,7 +153,7 @@ function recommendationCard(item, index) {
     : `<div class="gate-summary failed"><b>${item.nearMiss ? `YATIR'A ${item.distanceToEligible || failedItems.length} KAPI KALDI` : "NE DEĞİŞMELİ?"}</b><span>${escapeHtml(failedMessages.length ? failedMessages.slice(0, 3).join(" | ") : "Güvenlik koşulları tamamlanmadı")}</span></div>`;
   const reasons = (Array.isArray(item.reasons) ? item.reasons : ["Araştırma gerekçesi mevcut değil."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
   const orderSection = item.eligible ? `<div class="order-title"><span>${escapeHtml(order.label || "ÖNERİLEN EMİR PLANI")}</span><b>${order.validPlanCount || 1}/3 plan geçerli</b></div>
-    <div class="levels order-levels"><div class="entry"><span>Alış limiti</span><b>${formatPrice(item, order.limitBuy)}</b></div><div class="stop"><span>Stop tetik</span><b>${formatPrice(item, order.stopTrigger)}</b></div><div class="stop"><span>Stop-limit</span><b>${formatPrice(item, order.stopLimit)}</b></div><div class="target"><span>Hedef 1</span><b>${formatPrice(item, order.target1)}</b></div><div class="target"><span>Hedef 2</span><b>${formatPrice(item, order.target2)}</b></div><div><span>Geçerlilik</span><b>${escapeHtml(order.validUntil || "Yeni veri gelene kadar")}</b></div></div>` : `<div class="inactive-order"><b>YATIRMA</b><span>Emir seviyesi etkin değil; eksik kapılar yukarıda açıkça gösteriliyor.</span></div>`;
+    <div class="levels order-levels"><div class="entry"><span>Alış limiti</span><b>${formatPrice(item, order.limitBuy)}</b></div><div class="stop"><span>Stop tetik</span><b>${formatPrice(item, order.stopTrigger)}</b></div><div class="stop"><span>Stop-limit</span><b>${formatPrice(item, order.stopLimit)}</b></div><div class="target"><span>Hedef 1</span><b>${formatPrice(item, order.target1)}</b></div><div class="target"><span>Hedef 2</span><b>${formatPrice(item, order.target2)}</b></div><div><span>Geçerlilik</span><b>${escapeHtml(order.validUntil || "Yeni veri gelene kadar")}</b></div><div><span>Önerilen adet</span><b>${formatQuantity(item, item.positionSizing?.quantity)}</b></div><div><span>Pozisyon büyüklüğü</span><b>${formatMoney(item.positionSizing?.positionValue)}</b></div><div class="stop"><span>Azami kayıp</span><b>${formatMoney(item.positionSizing?.maxLoss)}</b></div></div>` : `<div class="inactive-order"><b>YATIRMA</b><span>Emir seviyesi etkin değil; eksik kapılar yukarıda açıkça gösteriliyor.</span></div>`;
   const age = item.market === "crypto" ? `${fmt(item.dataAgeHours, 1)} saat` : `${item.dataAgeBusinessDays ?? "—"} iş günü`;
   const forecastDisplay = item.forecastDisplay || [{ key: "1", label: "1 GÜN" }, { key: "5", label: "5 GÜN" }, { key: "20", label: "20 GÜN" }];
   const forecasts = forecastDisplay.map(({ key, label }) => forecastCard(item.forecasts?.[String(key)], label)).join("");
@@ -145,10 +165,13 @@ function recommendationCard(item, index) {
     item.market !== "crypto" && item.links?.kap ? `<a href="${escapeHtml(item.links.kap)}" target="_blank" rel="noreferrer">KAP ↗</a>` : "",
   ].filter(Boolean).join("");
   const watchFlag = item.autoWatched ? `<div class="watch-flag">◎ Otomatik takipte · sonraki taramada kapı mesafesi yeniden ölçülecek</div>` : "";
+  const nextAction = `<div class="next-action ${item.nextCondition?.ready ? "ready" : "waiting"}"><b>${item.nextCondition?.ready ? "SONRAKİ ADIM" : "YATIR İÇİN GEREKEN"}</b><span>${escapeHtml(item.nextCondition?.primary || (item.eligible ? "Limit emri koşulu izleniyor." : "Eksik kapılar yeniden hesaplanıyor."))}</span></div>`;
+  const decisionChange = item.decisionChange ? `<div class="decision-change"><b>SON TARAMADAN BERİ</b><span>${escapeHtml(item.decisionChange.summary)}</span></div>` : "";
   return `<article class="stock-card ${item.eligible ? "candidate" : ""} ${item.autoWatched ? "watched" : ""}">
     <div class="stock-head"><span class="rank">${index + 1}</span><div class="stock-name"><div><b>${escapeHtml(item.displaySymbol || item.symbol)}</b><em class="market-badge ${marketClass}">${escapeHtml(item.marketLabel || marketClass.toUpperCase())}</em></div><span>${formatPrice(item, item.price)} · veri ${escapeHtml(item.dataDate)} · ${age}</span></div><span class="action ${actionClass}">${escapeHtml(item.action)}</span></div>
     <div class="score-row"><span>Birleşik güç</span><div class="score-bar"><i style="width:${Math.max(0, Math.min(100, Math.round(item.rankScore || 0)))}%"></i></div><b>${Math.round(item.rankScore || 0)}</b></div>
     ${watchFlag}
+    ${nextAction}${decisionChange}
     ${failedBanner}
     <div class="strategy-line"><span>SEÇİLEN STRATEJİ</span><b>${escapeHtml(item.strategy?.label || "Trend devamı")}</b><em>${item.strategy?.comparisons?.length || 1} model karşılaştırıldı</em></div>
     ${evidencePanel(item)}
@@ -178,6 +201,18 @@ function renderHistory(history) {
   return `<div class="history-summary"><article><span>Limit bekleyen</span><b>${stats.pending || 0}</b></article><article><span>Aktif</span><b>${stats.active || 0}</b></article><article><span>Sonuçlanan</span><b>${stats.resolved || 0}</b></article><article><span>Pozitif sonuç</span><b>${winRate}</b></article><article><span>Ortalama</span><b>${stats.averageR == null ? "—" : `${fmt(stats.averageR, 2)}R`}</b></article><article><span>Toplam R</span><b>${fmt(stats.totalR || 0, 2)}R</b></article></div><p class="history-note">${escapeHtml(history?.note || "Kapanmış mumlarla otomatik kâğıt işlem izlenir; gerçek işlem kaydı değildir.")}</p>${rows || '<div class="empty-card"><h2>Henüz kâğıt emir yok</h2><p>Bir varlık tüm kapıları geçtiğinde limit emri otomatik izlenmeye başlar; dolmadan pozisyon sayılmaz.</p></div>'}`;
 }
 
+function renderJournal(journal) {
+  const entries = journal?.entries || [];
+  const rows = entries.map((entry) => {
+    const market = entry.market === "crypto" ? "crypto" : "bist";
+    const positive = entry.action === "YATIR";
+    const date = new Date(entry.at);
+    const time = Number.isFinite(date.getTime()) ? date.toLocaleString("tr-TR") : "—";
+    return `<article class="journal-row"><header><em class="market-badge ${market}">${market === "crypto" ? "KRİPTO" : "BIST"}</em><b>${escapeHtml(entry.displaySymbol || entry.symbol)}</b><time>${escapeHtml(time)}</time></header><strong class="journal-action ${positive ? "positive" : ""}">${escapeHtml(entry.action || "YATIRMA")}</strong><p>${escapeHtml(entry.summary || "Karar değişimi kaydedildi.")}</p><small>Sonraki koşul: ${escapeHtml(entry.next || "Yeni taramada yeniden hesaplanacak.")}</small></article>`;
+  }).join("");
+  return `<div class="journal-summary">Son 250 karar değişimi yerel olarak saklanır. Bu günlük sinyalin hangi kapı nedeniyle açıldığını veya kapandığını gösterir; gerçek emir kaydı değildir.</div>${rows || '<div class="empty-card"><h2>Henüz karar değişimi yok</h2><p>İlk v3.1 taramasından sonra değişen kapılar burada zaman sırasıyla görünür.</p></div>'}`;
+}
+
 function legacyToCombined(result) {
   if (result?.version >= 4 && result.markets) return result;
   const bist = { ...result, market: "bist", recommendations: (result?.recommendations || []).map((item) => ({ market: "bist", marketLabel: "BIST", displaySymbol: item.symbol, priceDecimals: 2, ...item })), snapshot: result?.snapshot || [] };
@@ -192,15 +227,23 @@ function legacyToCombined(result) {
 
 function renderActiveTab() {
   if (!currentResult) return;
-  const tabMap = { all: "tabAll", bist: "tabBist", crypto: "tabCrypto", watch: "tabWatch", history: "tabHistory" };
+  const tabMap = { all: "tabAll", bist: "tabBist", crypto: "tabCrypto", watch: "tabWatch", history: "tabHistory", journal: "tabJournal" };
   for (const [tab, id] of Object.entries(tabMap)) $(id).classList.toggle("active", activeTab === tab);
   const isHistory = activeTab === "history";
-  $("recommendations").hidden = isHistory;
+  const isJournal = activeTab === "journal";
+  $("recommendations").hidden = isHistory || isJournal;
   $("historyPanel").hidden = !isHistory;
+  $("journalPanel").hidden = !isJournal;
   if (isHistory) {
     $("recommendationTitle").textContent = "Sinyal geçmişi";
     $("universeLabel").textContent = "Otomatik kâğıt emir · gerçek aracı kurum işlemi değil";
     $("historyPanel").innerHTML = renderHistory(currentResult.signalHistory);
+    return;
+  }
+  if (isJournal) {
+    $("recommendationTitle").textContent = "Karar günlüğü";
+    $("universeLabel").textContent = "Açılan/kapanan kapılar · son 250 değişim";
+    $("journalPanel").innerHTML = renderJournal(currentResult.decisionJournal);
     return;
   }
   const filtered = (currentResult.recommendations || []).filter((item) => activeTab === "all" || activeTab === "watch" ? (activeTab === "all" || item.autoWatched || item.nearMiss) : item.market === activeTab);
@@ -233,6 +276,11 @@ function render(input) {
   $("generatedAt").textContent = new Date(result.generatedAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   $("kapCheckedCount").textContent = `${result.research?.kapCheckedCount ?? 0}/${result.research?.deepResearchLimit ?? "—"}`;
   $("paperOpenCount").textContent = result.signalHistory?.stats?.open || 0;
+  $("dataHealthCount").textContent = `${(result.recommendations || []).filter((item) => item.dataHealth?.passed).length}/${(result.recommendations || []).length}`;
+  const healthSummaries = Object.values(result.modelHealth?.summaries || {});
+  $("modelHealthStatus").textContent = healthSummaries.some((item) => item.status === "KİLİTLİ") ? "KİLİTLİ" : healthSummaries.some((item) => item.status === "STABİL") ? "STABİL" : "ISINIYOR";
+  $("portfolioStressPct").textContent = result.portfolioStress ? `%${fmt(result.portfolioStress.shockLossPct, 2)}` : "—";
+  if ($("paperCapital")) $("paperCapital").value = String(result.settings?.paperCapital || 100000);
   $("evidenceACount").textContent = (result.recommendations || []).filter((item) => item.evidenceGrade === "A" || item.validation?.evidenceGrade === "A").length;
   const bistCount = (result.recommendations || []).filter((item) => item.market !== "crypto").length;
   const cryptoCount = (result.recommendations || []).filter((item) => item.market === "crypto").length;
@@ -241,11 +289,26 @@ function render(input) {
   $("cryptoCount").textContent = cryptoCount;
   $("watchCount").textContent = result.nearWatch?.count ?? (result.recommendations || []).filter((item) => item.autoWatched || item.nearMiss).length;
   $("historyCount").textContent = result.signalHistory?.records?.length || 0;
+  $("journalCount").textContent = result.decisionJournal?.entries?.length || 0;
   $("errorDetails").hidden = !result.errorCount;
   $("errorCount").textContent = result.errorCount;
   $("errorList").innerHTML = (result.errors || []).map((error) => `<li><b>${escapeHtml(error.symbol)}</b> · ${escapeHtml(error.message)}</li>`).join("");
   renderActiveTab();
   setStatus(result.candidateCount ? `YATIR · ${result.candidateCount}` : "YATIRMA");
+}
+
+function scheduleCapitalUpdate() {
+  clearTimeout(capitalTimer);
+  capitalTimer = setTimeout(async () => {
+    const value = Number($("paperCapital")?.value);
+    if (!Number.isFinite(value) || value < 1000) return;
+    setStatus("Risk planı güncelleniyor");
+    try {
+      const response = await sendMessage("SET_PAPER_CAPITAL", { paperCapital: value });
+      if (response?.result) render(response.result);
+      else setStatus("Bir sonraki taramada uygulanacak");
+    } catch { setStatus("Sermaye yerelde kaydedilemedi", true); }
+  }, 600);
 }
 
 async function fallbackScan() {
@@ -255,18 +318,26 @@ async function fallbackScan() {
     FinPilotCryptoScanner.runScan({ onProgress: progress }),
   ]);
   const empty = (market, outcome) => ({ market, scannedCount: 0, requestedCount: 0, candidateCount: 0, errorCount: 1, recommendations: [], snapshot: [], errors: [{ symbol: market.toUpperCase(), message: outcome.reason?.message || String(outcome.reason) }], marketRegime: { gateOpen: false, dataSufficient: false, breadthPct: 0 } });
-  const stored = await chrome.storage.local.get(["finpilotSignalHistory", "finpilotNearWatch"]);
+  const stored = await chrome.storage.local.get(["finpilotAutomaticScan", "finpilotSignalHistory", "finpilotNearWatch", "finpilotDecisionJournal", "finpilotResearchSettings"]);
   const bistRaw = bistOutcome.status === "fulfilled" ? bistOutcome.value : empty("bist", bistOutcome);
   const cryptoRaw = cryptoOutcome.status === "fulfilled" ? cryptoOutcome.value : empty("crypto", cryptoOutcome);
   const bist = FinPilotSignalTracker.applyPerformanceGuard(bistRaw, stored.finpilotSignalHistory || null);
   const crypto = FinPilotSignalTracker.applyPerformanceGuard(cryptoRaw, stored.finpilotSignalHistory || null);
   let result = FinPilotMarketAggregator.combineResults(bist, crypto, new Date());
+  result = FinPilotDecisionIntelligence.applyRelativeStrength(result);
   result = FinPilotPortfolioRisk.applyPortfolioRisk(result, stored.finpilotSignalHistory || null);
+  result = FinPilotDecisionIntelligence.applyModelHealth(result, stored.finpilotSignalHistory || null);
+  const settings = { paperCapital: Number(stored.finpilotResearchSettings?.paperCapital) || 100000 };
+  result = FinPilotDecisionIntelligence.applyPositionSizingAndStress(result, stored.finpilotSignalHistory || null, settings);
   const history = FinPilotSignalTracker.updateHistory(stored.finpilotSignalHistory || null, result, new Date());
+  const journalUpdate = FinPilotDecisionIntelligence.updateDecisionJournal(stored.finpilotAutomaticScan || null, result, stored.finpilotDecisionJournal || null, new Date());
+  result = journalUpdate.result;
   const watch = FinPilotNearWatch.updateWatch(stored.finpilotNearWatch || null, result, new Date());
   const watchedResult = FinPilotNearWatch.attachToResult(result, watch);
+  watchedResult.version = 7;
+  watchedResult.settings = settings;
   watchedResult.signalHistory = history;
-  await chrome.storage.local.set({ finpilotAutomaticScan: watchedResult, finpilotSignalHistory: history, finpilotNearWatch: watch });
+  await chrome.storage.local.set({ finpilotAutomaticScan: watchedResult, finpilotSignalHistory: history, finpilotNearWatch: watch, finpilotDecisionJournal: journalUpdate.journal, finpilotResearchSettings: settings });
   return watchedResult;
 }
 
@@ -294,6 +365,8 @@ async function init() {
   $("tabCrypto").addEventListener("click", () => selectTab("crypto"));
   $("tabWatch").addEventListener("click", () => selectTab("watch"));
   $("tabHistory").addEventListener("click", () => selectTab("history"));
+  $("tabJournal").addEventListener("click", () => selectTab("journal"));
+  $("paperCapital")?.addEventListener("input", scheduleCapitalUpdate);
   showProgress(true);
   setStatus("Kontrol ediliyor");
   try {

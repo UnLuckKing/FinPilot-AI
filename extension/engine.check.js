@@ -21,7 +21,10 @@ assert.ok(analysis.model.available);
 assert.equal(analysis.model.reliability.length, 5);
 assert.ok(analysis.model.expectedCalibrationError >= 0);
 assert.ok(analysis.model.calibratedProbabilityUp >= 0 && analysis.model.calibratedProbabilityUp <= 100);
-assert.equal(analysis.agents.length, 8);
+assert.equal(analysis.agents.length, 10);
+assert.equal(analysis.dataHealth.passed, true);
+assert.ok(analysis.multiTimeframe.available);
+assert.ok(analysis.multiTimeframe.alignmentScore >= 0 && analysis.multiTimeframe.alignmentScore <= 100);
 assert.equal(analysis.strategy.mode, "trend");
 assert.ok(analysis.agents.some((agent) => agent.name === "Strateji Seçici"));
 assert.deepEqual(analysis.forecasts.map((forecast) => forecast.horizon), [1, 5, 20]);
@@ -46,7 +49,9 @@ assert.ok(strategySuite.validation.foldCount >= 2);
 assert.ok(["A", "B", "C", "D"].includes(strategySuite.validation.evidenceGrade));
 assert.ok(["strongTrend", "weakTrend", "sideways", "highVolatility", "riskOff", "liquidityPump"].includes(strategySuite.regime.id));
 assert.ok(strategySuite.challenger);
-assert.equal(strategySuite.selected.agents.length, 10);
+assert.equal(strategySuite.selected.agents.length, 12);
+assert.equal(strategySuite.validation.evidenceGrade, engine.conservativeEvidenceGrade(strategySuite.validation.selectedEvidenceGrade, strategySuite.validation.overallEvidenceGrade));
+assert.equal(strategySuite.validation.oosProgress, `${strategySuite.validation.oos.trades}/12`);
 assert.equal(strategySuite.strategies.length, 4);
 assert.deepEqual(strategySuite.strategies.map((item) => item.id).sort(), ["breakout", "meanReversion", "pullback", "trend"]);
 assert.ok(strategySuite.strategies.every((item) => Number.isFinite(item.selectionScore)));
@@ -59,6 +64,10 @@ assert.ok(plan.target2 > plan.target1);
 
 const cappedPlan = engine.riskPlan({ capital: 100000, price: 100, atr: 0.01, riskPct: 2, maxPositionPct: 25 });
 assert.ok(cappedPlan.positionValue <= 25000);
+
+const damagedRows = sampleRows();
+damagedRows.at(-1).high = damagedRows.at(-1).close - 5;
+assert.equal(engine.assessDataHealth(damagedRows, { market: "bist" }).passed, false);
 
 const csv = ["time,open,high,low,close,volume", ...rows.slice(0, 80).map((row) => `${row.time},${row.open},${row.high},${row.low},${row.close},${row.volume}`)].join("\n");
 assert.equal(engine.parseCsv(csv).length, 80);

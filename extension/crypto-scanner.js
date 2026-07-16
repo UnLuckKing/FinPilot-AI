@@ -16,6 +16,9 @@
   const STABLE_BASES = new Set(["USDC", "FDUSD", "TUSD", "USDP", "DAI", "EUR", "TRY", "AEUR", "EURI", "BFUSD", "USD1"]);
   const LEVERAGED_SUFFIX = /(UP|DOWN|BULL|BEAR)$/i;
   const CRYPTO_PROFILE = Object.freeze({
+    market: "crypto",
+    timeframeGroups: [6, 42],
+    timeframeLabels: ["4 saat", "1 gün", "1 hafta"],
     threshold: 62,
     minimumTrades: 20,
     minimumProfitFactor: 1.25,
@@ -30,6 +33,7 @@
     minimumQuoteVolume: 5_000_000,
     minimumTrades24h: 2_000,
     maximumDailyMovePct: 22,
+    maximumSpreadBps: 20,
     universeLimit: 140,
     stopAtr: 2.2,
     rewardRisk: 2.2,
@@ -79,6 +83,7 @@
   function parseCryptoUniverse(exchangeInfo, tickers, options = {}) {
     const profile = { ...CRYPTO_PROFILE, ...(options.profile || {}) };
     const tickerMap = new Map((Array.isArray(tickers) ? tickers : []).map((ticker) => [ticker.symbol, ticker]));
+    const bookMap = new Map((Array.isArray(options.bookTickers) ? options.bookTickers : []).map((ticker) => [ticker.symbol, ticker]));
     const assets = [];
     for (const symbolInfo of exchangeInfo?.symbols || []) {
       const baseAsset = String(symbolInfo.baseAsset || "").toUpperCase();
@@ -89,6 +94,11 @@
       const trades24h = finite(ticker.count);
       const priceChangePct = finite(ticker.priceChangePercent);
       const permissions = Array.isArray(symbolInfo.permissions) ? symbolInfo.permissions : [];
+      const book = bookMap.get(symbolInfo.symbol) || {};
+      const bidPrice = finite(book.bidPrice, NaN);
+      const askPrice = finite(book.askPrice, NaN);
+      const midPrice = bidPrice > 0 && askPrice >= bidPrice ? (bidPrice + askPrice) / 2 : NaN;
+      const spreadBps = Number.isFinite(midPrice) && midPrice > 0 ? (askPrice - bidPrice) / midPrice * 10_000 : null;
       const spotAllowed = symbolInfo.isSpotTradingAllowed !== false && (!permissions.length || permissions.includes("SPOT"));
       if (symbolInfo.status !== "TRADING" || quoteAsset !== "USDT" || !spotAllowed || !baseAsset || price <= 0) continue;
       if (STABLE_BASES.has(baseAsset) || LEVERAGED_SUFFIX.test(baseAsset)) continue;
@@ -103,6 +113,9 @@
         quoteVolume,
         trades24h,
         priceChangePct,
+        bidPrice: Number.isFinite(bidPrice) ? bidPrice : null,
+        askPrice: Number.isFinite(askPrice) ? askPrice : null,
+        spreadBps,
         tickSize: finite(priceFilter.tickSize, Math.max(price * 0.000001, 0.00000001)),
         stepSize: finite(lotFilter.stepSize, 0.000001),
         exchangeStatus: symbolInfo.status,
@@ -122,12 +135,13 @@
       totalTradingPairs: (options.exchangeInfo?.symbols || []).length,
       sourceBase: "provided",
     };
-    const [exchange, ticker] = await Promise.all([
+    const [exchange, ticker, book] = await Promise.all([
       fetchJson("/api/v3/exchangeInfo", options),
       fetchJson("/api/v3/ticker/24hr", options),
+      fetchJson("/api/v3/ticker/bookTicker", options),
     ]);
     return {
-      assets: parseCryptoUniverse(exchange.data, ticker.data, options),
+      assets: parseCryptoUniverse(exchange.data, ticker.data, { ...options, bookTickers: book.data }),
       totalTradingPairs: (exchange.data?.symbols || []).length,
       sourceBase: exchange.base,
     };
@@ -255,16 +269,20 @@
     const recentEdge = backtest.recentTrades >= 6 && backtest.recentExpectancyR > 0 && backtest.recentProfitFactor >= 1;
     const stressEdge = Boolean(backtest.stress?.available) && backtest.stress.profitablePct >= profile.minimumStressProfitability;
     const liquidityEdge = asset.quoteVolume >= profile.minimumQuoteVolume && asset.trades24h >= profile.minimumTrades24h && Math.abs(asset.priceChangePct) <= profile.maximumDailyMovePct;
+    const executionQualityEdge = Number.isFinite(asset.spreadBps) && asset.spreadBps <= profile.maximumSpreadBps;
+    const dataHealthEdge = Boolean(analysis.dataHealth?.passed);
+    const multiTimeframeEdge = Boolean(analysis.multiTimeframe?.passed);
+    const forecastReliabilityEdge = Boolean(primary?.available) && primary.reliable !== false;
     const profitFactorScore = Number.isFinite(backtest.profitFactor) ? clamp(backtest.profitFactor * 38, 0, 100) : 100;
     const directionScore = primary?.available ? primary.probabilityUp : 0;
     const modelScore = analysis.model.available ? finite(analysis.model.calibratedProbabilityUp, analysis.model.probabilityUp) : 50;
     let score = analysis.setupScore * 0.27 + analysis.estimatedProbability * 0.15 + profitFactorScore * 0.14 + modelScore * 0.11 + directionScore * 0.17 + clamp(50 + backtest.recentExpectancyR * 40, 0, 100) * 0.08 + clamp(backtest.stress?.profitablePct || 0, 0, 100) * 0.08;
     if (setup) score += 7;
     score += analysis.validation?.evidenceGrade === "A" ? 6 : analysis.validation?.evidenceGrade === "B" ? 3 : analysis.validation?.evidenceGrade === "D" ? -10 : -4;
-    return { setup, backtestEdge, modelEdge, validationEdge, directionEdge, recentEdge, stressEdge, liquidityEdge, score: clamp(score, 0, 100) };
+    return { setup, backtestEdge, modelEdge, validationEdge, directionEdge, recentEdge, stressEdge, liquidityEdge, executionQualityEdge, dataHealthEdge, multiTimeframeEdge, forecastReliabilityEdge, score: clamp(score, 0, 100) };
   }
 
-  function returnSignature(rows, size = 36) {
+  function returnSignature(rows, size = 84) {
     return rows.slice(-Math.max(2, size + 1)).map((row, index, values) => index ? Math.log(row.close / values[index - 1].close) : null).filter(Number.isFinite).slice(-size).map((value) => Number(value.toFixed(6)));
   }
 
@@ -277,16 +295,20 @@
     const dataFresh = ageHours <= profile.maximumDataAgeHours;
     const forecasts = Object.fromEntries((analysis.forecasts || []).map((forecast) => [String(forecast.horizon), forecast]));
     const primary = forecasts[String(profile.primaryHorizon)];
-    const preEligible = evaluation.setup && evaluation.backtestEdge && evaluation.modelEdge && evaluation.validationEdge && evaluation.directionEdge && evaluation.recentEdge && evaluation.stressEdge && evaluation.liquidityEdge && orderPlan.valid && dataFresh;
+    const preEligible = evaluation.setup && evaluation.backtestEdge && evaluation.modelEdge && evaluation.validationEdge && evaluation.directionEdge && evaluation.recentEdge && evaluation.stressEdge && evaluation.liquidityEdge && evaluation.executionQualityEdge && evaluation.dataHealthEdge && evaluation.multiTimeframeEdge && evaluation.forecastReliabilityEdge && orderPlan.valid && dataFresh;
     const gates = {
       setup: evaluation.setup,
       backtest: evaluation.backtestEdge,
       model: evaluation.modelEdge,
       validation: evaluation.validationEdge,
+      dataHealth: evaluation.dataHealthEdge,
+      multiTimeframe: evaluation.multiTimeframeEdge,
+      forecastReliability: evaluation.forecastReliabilityEdge,
       direction: evaluation.directionEdge,
       recentRegime: evaluation.recentEdge,
       stress: evaluation.stressEdge,
       liquidity: evaluation.liquidityEdge,
+      executionQuality: evaluation.executionQualityEdge,
       orderPlan: orderPlan.valid,
       dataFresh,
       market: false,
@@ -297,10 +319,14 @@
       backtest: { passed: evaluation.backtestEdge, label: "Backtest", message: `${analysis.backtest.totalTrades}/${profile.minimumTrades} işlem · PF ${pfText}/${profile.minimumProfitFactor.toFixed(2)} · beklenti ${analysis.backtest.expectancyR.toFixed(2)}R/${profile.minimumExpectancyR.toFixed(2)}R.` },
       model: { passed: evaluation.modelEdge, label: "ML", message: analysis.model.available ? `Kalibre yükseliş %${finite(analysis.model.calibratedProbabilityUp, analysis.model.probabilityUp).toFixed(1)}/%${profile.minimumModelProbability} · doğruluk %${analysis.model.outOfSampleAccuracy.toFixed(1)}/%48 · Brier ${analysis.model.brierScore.toFixed(3)}/${profile.maximumBrierScore.toFixed(2)} · kalibrasyon hatası %${finite(analysis.model.expectedCalibrationError, 100).toFixed(1)}/%${profile.maximumCalibrationError} azami.` : "ML modeli için yeterli kronolojik örnek yok." },
       validation: { passed: evaluation.validationEdge, label: "Dönem dışı test", message: analysis.validation ? `Kanıt ${analysis.validation.evidenceGrade}/B gerekli · ${analysis.validation.oos.trades} dönem dışı işlem · tutarlılık %${analysis.validation.stabilityPct.toFixed(0)} · aşırı uyum ${analysis.validation.overfitRisk}.` : "Walk-forward doğrulaması üretilemedi." },
+      dataHealth: { passed: evaluation.dataHealthEdge, label: "Veri sağlığı", message: analysis.dataHealth?.passed ? `${analysis.dataHealth.sampleSize} kapanmış mum; OHLC, tekrar, boşluk ve uç hareket kontrolleri geçti.` : `Veri karantinada: ${(analysis.dataHealth?.warnings || ["sağlık denetimi geçmedi"]).join(" · ")}.` },
+      multiTimeframe: { passed: evaluation.multiTimeframeEdge, label: "Çoklu zaman", message: `${analysis.multiTimeframe?.summary || "Zaman dilimi üretilemedi"} · uyum %${finite(analysis.multiTimeframe?.alignmentScore).toFixed(0)}/%58.` },
+      forecastReliability: { passed: evaluation.forecastReliabilityEdge, label: "Tahmin güveni", message: primary?.available ? `1 günlük aralık genişliği %${finite(primary.intervalWidthPct).toFixed(1)}/%${finite(primary.maximumIntervalWidthPct).toFixed(1)} azami · ${primary.reliability || "KULLANILABİLİR"}.` : "1 günlük tahmin örneği yetersiz." },
       direction: { passed: evaluation.directionEdge, label: "Yön", message: primary?.available ? `1 gün yükseliş %${primary.probabilityUp.toFixed(1)}/%${profile.minimumDirectionProbability} · düşüş %${primary.probabilityDown.toFixed(1)}/%${profile.maximumDirectionDownProbability} azami · medyan %${primary.expectedMedianPct.toFixed(2)}.` : "1 günlük yön örneği yetersiz." },
       recentRegime: { passed: evaluation.recentEdge, label: "Yakın dönem", message: `${analysis.backtest.recentTrades}/6 işlem · PF ${analysis.backtest.recentProfitFactor.toFixed(2)}/1.00 · beklenti ${analysis.backtest.recentExpectancyR.toFixed(2)}R/>0R.` },
       stress: { passed: evaluation.stressEdge, label: "Stres", message: analysis.backtest.stress?.available ? `Pozitif senaryo %${analysis.backtest.stress.profitablePct.toFixed(1)}/%${profile.minimumStressProfitability}.` : "Stres testi için en az 8 işlem gerekli." },
       liquidity: { passed: evaluation.liquidityEdge, label: "Likidite/pump", message: `Hacim ${(asset.quoteVolume / 1_000_000).toFixed(1)}/${(profile.minimumQuoteVolume / 1_000_000).toFixed(1)} milyon USDT · işlem ${asset.trades24h}/${profile.minimumTrades24h} · hareket %${Math.abs(asset.priceChangePct).toFixed(1)}/%${profile.maximumDailyMovePct} azami.` },
+      executionQuality: { passed: evaluation.executionQualityEdge, label: "İşlem kalitesi", message: Number.isFinite(asset.spreadBps) ? `Binance en iyi alış/satış farkı ${asset.spreadBps.toFixed(1)}/${profile.maximumSpreadBps} baz puan azami.` : "Binance alış/satış farkı doğrulanamadı; işlem kalitesi kapısı kapalı." },
       orderPlan: { passed: orderPlan.valid, label: "Emir planı", message: orderPlan.valid ? `${orderPlan.label}: 3 plandan ${orderPlan.validPlanCount} tanesi geçerli; risk ${orderPlan.riskAtr.toFixed(2)} ATR ve %${orderPlan.riskPct.toFixed(2)}.` : (orderPlan.failureReasons || ["Üç emir planı da risk sınırlarını geçemedi."]).join(" ") },
       dataFresh: { passed: dataFresh, label: "Tazelik", message: `Veri yaşı ${ageHours.toFixed(1)} saat; azami ${profile.maximumDataAgeHours} saat.` },
       market: { passed: false, label: "BTC/piyasa", message: "BTC ve piyasa genişliği tarama sonunda hesaplanacak." },
@@ -329,6 +355,10 @@
       quoteVolume24h: asset.quoteVolume,
       trades24h: asset.trades24h,
       priceChangePct24h: asset.priceChangePct,
+      bidPrice: asset.bidPrice,
+      askPrice: asset.askPrice,
+      spreadBps: asset.spreadBps,
+      stepSize: asset.stepSize,
       historicalProbability: analysis.backtest.totalTrades >= profile.minimumTrades ? analysis.backtest.smoothedWinProbability : null,
       probabilityLow: analysis.backtest.totalTrades >= profile.minimumTrades ? analysis.backtest.confidenceLow : null,
       probabilityHigh: analysis.backtest.totalTrades >= profile.minimumTrades ? analysis.backtest.confidenceHigh : null,
@@ -344,6 +374,8 @@
       calibrationError: analysis.model.available ? analysis.model.expectedCalibrationError : null,
       modelAccuracy: analysis.model.available ? analysis.model.outOfSampleAccuracy : null,
       validation: analysis.validation || null,
+      dataHealth: analysis.dataHealth || null,
+      multiTimeframe: analysis.multiTimeframe || null,
       regime: analysis.regime || null,
       challenger: analysis.challenger || null,
       evidenceGrade: analysis.validation?.evidenceGrade || "D",
@@ -377,6 +409,9 @@
         `Seçilen yaklaşım: ${analysis.strategy?.label || "Trend devamı"}; ${analysis.strategyComparisons?.length || 1} strateji aynı veri üzerinde ayrı backtest edildi.`,
         analysis.validation?.decisionDelta || "Rejim ve walk-forward strateji seçimi tamamlanamadı.",
         analysis.validation ? `Kanıt notu ${analysis.validation.evidenceGrade}; ${analysis.validation.oos.trades} dönem dışı işlem, dilim tutarlılığı %${analysis.validation.stabilityPct.toFixed(1)}, aşırı uyum riski ${analysis.validation.overfitRisk}.` : "Dönem dışı doğrulama yok.",
+        `Çoklu zaman: ${analysis.multiTimeframe?.summary || "hesaplanamadı"}; uyum %${finite(analysis.multiTimeframe?.alignmentScore).toFixed(1)}.`,
+        analysis.dataHealth?.passed ? `Veri sağlığı ${analysis.dataHealth.score.toFixed(0)}/100; mum bütünlüğü kontrolleri geçti.` : `Veri karantinası: ${(analysis.dataHealth?.warnings || []).join(" · ")}.`,
+        Number.isFinite(asset.spreadBps) ? `Anlık alış/satış farkı ${asset.spreadBps.toFixed(1)} baz puan.` : "Anlık alış/satış farkı doğrulanamadı.",
         `Binance spot hacmi ${Math.round(asset.quoteVolume / 1_000_000).toLocaleString("tr-TR")} milyon USDT; 24 saatlik hareket %${asset.priceChangePct.toFixed(2)}.`,
         `4 saatlik kurulum puanı ${analysis.setupScore.toFixed(1)}; piyasa yönü ${latest.trend > 0 ? "yukarı" : latest.trend < 0 ? "aşağı" : "yatay"}.`,
         `Masraflı backtest: ${analysis.backtest.totalTrades} işlem, PF ${Number.isFinite(analysis.backtest.profitFactor) ? analysis.backtest.profitFactor.toFixed(2) : "∞"}, beklenti ${analysis.backtest.expectancyR.toFixed(2)}R.`,
@@ -398,7 +433,7 @@
     const marketGate = Boolean(marketGateOpen) && Boolean(dataSufficient);
     const eligible = Boolean(item.preEligible) && marketGate;
     const gates = { ...item.gates, market: marketGate };
-    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", market: "BTC/piyasa" };
+    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", dataHealth: "Veri sağlığı", multiTimeframe: "Çoklu zaman", forecastReliability: "Tahmin güveni", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", executionQuality: "İşlem kalitesi", orderPlan: "Emir planı", dataFresh: "Tazelik", market: "BTC/piyasa" };
     const gateDiagnostics = {
       ...(item.gateDiagnostics || {}),
       market: {

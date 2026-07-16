@@ -20,6 +20,9 @@
     "SISE", "TAVHL", "TCELL", "THYAO", "TOASO", "TRALT", "TTKOM", "TUPRS", "VAKBN", "YKBNK",
   ];
   const PROFILE = Object.freeze({
+    market: "bist",
+    timeframeGroups: [5, 20],
+    timeframeLabels: ["1 gün", "1 hafta", "1 ay"],
     threshold: 60,
     minimumTrades: 20,
     minimumProfitFactor: 1.25,
@@ -729,15 +732,19 @@
     const recentEdge = backtest.recentTrades >= 6 && backtest.recentExpectancyR > 0 && backtest.recentProfitFactor >= 1;
     const stressEdge = Boolean(backtest.stress?.available) && backtest.stress.profitablePct >= PROFILE.minimumStressProfitability;
     const validationEdge = Boolean(analysis.validation?.passed);
-    const edge = backtestEdge && modelEdge && fundamentalEdge && directionEdge && recentEdge && stressEdge && validationEdge;
+    const closeDifferencePct = Number.isFinite(fundamental?.close) && fundamental.close > 0 ? Math.abs(analysis.latest.close / fundamental.close - 1) * 100 : null;
+    const dataHealthEdge = Boolean(analysis.dataHealth?.passed) && (closeDifferencePct == null || closeDifferencePct <= 12);
+    const multiTimeframeEdge = Boolean(analysis.multiTimeframe?.passed);
+    const forecastReliabilityEdge = Boolean(fiveDay?.available) && fiveDay.reliable !== false;
+    const edge = backtestEdge && modelEdge && fundamentalEdge && directionEdge && recentEdge && stressEdge && validationEdge && dataHealthEdge && multiTimeframeEdge && forecastReliabilityEdge;
     let score = analysis.setupScore * 0.24 + analysis.estimatedProbability * 0.16 + profitFactorScore * 0.13 + expectancyScore * 0.09 + modelScore * 0.11 + fundamentalScore * 0.11 + directionScore * 0.16;
     if (analysis.decision === "LONG ADAYI") score += 10;
     else if (!watchEdge) score -= 18;
     score += analysis.validation?.evidenceGrade === "A" ? 6 : analysis.validation?.evidenceGrade === "B" ? 3 : analysis.validation?.evidenceGrade === "D" ? -10 : -4;
-    return { score: clamp(score, 0, 100), edge, watchEdge, backtestEdge, modelEdge, fundamentalEdge, directionEdge, recentEdge, stressEdge, validationEdge };
+    return { score: clamp(score, 0, 100), edge, watchEdge, backtestEdge, modelEdge, fundamentalEdge, directionEdge, recentEdge, stressEdge, validationEdge, dataHealthEdge, multiTimeframeEdge, forecastReliabilityEdge, closeDifferencePct };
   }
 
-  function returnSignature(rows, size = 36) {
+  function returnSignature(rows, size = 84) {
     return rows.slice(-Math.max(2, size + 1)).map((row, index, values) => index ? Math.log(row.close / values[index - 1].close) : null).filter(Number.isFinite).slice(-size).map((value) => Number(value.toFixed(6)));
   }
 
@@ -775,6 +782,25 @@
         passed: evaluation.validationEdge,
         label: "Dönem dışı test",
         message: analysis.validation ? `Kanıt ${analysis.validation.evidenceGrade}/B gerekli · ${analysis.validation.oos.trades} dönem dışı işlem · tutarlılık %${analysis.validation.stabilityPct.toFixed(0)} · aşırı uyum ${analysis.validation.overfitRisk}.` : "Walk-forward doğrulaması üretilemedi.",
+      },
+      dataHealth: {
+        passed: evaluation.dataHealthEdge,
+        label: "Veri sağlığı",
+        message: !analysis.dataHealth?.passed
+          ? `Veri karantinada: ${(analysis.dataHealth?.warnings || ["sağlık denetimi geçmedi"]).join(" · ")}.`
+          : evaluation.closeDifferencePct != null
+            ? `OHLC sağlıklı · tarihsel/temel tablo kapanış farkı %${evaluation.closeDifferencePct.toFixed(1)}/%12 azami.`
+            : `OHLC sağlıklı · ${analysis.dataHealth.sampleSize} kapanmış mum doğrulandı.`,
+      },
+      multiTimeframe: {
+        passed: evaluation.multiTimeframeEdge,
+        label: "Çoklu zaman",
+        message: `${analysis.multiTimeframe?.summary || "Zaman dilimi üretilemedi"} · uyum %${finite(analysis.multiTimeframe?.alignmentScore).toFixed(0)}/%58.`,
+      },
+      forecastReliability: {
+        passed: evaluation.forecastReliabilityEdge,
+        label: "Tahmin güveni",
+        message: fiveDay?.available ? `5 günlük aralık genişliği %${finite(fiveDay.intervalWidthPct).toFixed(1)}/%${finite(fiveDay.maximumIntervalWidthPct).toFixed(1)} azami · ${fiveDay.reliability || "KULLANILABİLİR"}.` : "5 günlük tahmin örneği yetersiz.",
       },
       fundamental: {
         passed: evaluation.fundamentalEdge,
@@ -849,6 +875,8 @@
       calibrationError: analysis.model.available ? analysis.model.expectedCalibrationError : null,
       modelAccuracy: analysis.model.available ? analysis.model.outOfSampleAccuracy : null,
       validation: analysis.validation || null,
+      dataHealth: { ...(analysis.dataHealth || {}), crossSourceDifferencePct: evaluation.closeDifferencePct },
+      multiTimeframe: analysis.multiTimeframe || null,
       regime: analysis.regime || null,
       challenger: analysis.challenger || null,
       evidenceGrade: analysis.validation?.evidenceGrade || "D",
@@ -890,6 +918,9 @@
         backtest: evaluation.backtestEdge,
         model: evaluation.modelEdge,
         validation: evaluation.validationEdge,
+        dataHealth: evaluation.dataHealthEdge,
+        multiTimeframe: evaluation.multiTimeframeEdge,
+        forecastReliability: evaluation.forecastReliabilityEdge,
         fundamental: evaluation.fundamentalEdge,
         direction: evaluation.directionEdge,
         recentRegime: evaluation.recentEdge,
@@ -904,6 +935,8 @@
         `Seçilen yaklaşım: ${analysis.strategy?.label || "Trend devamı"}; ${analysis.strategyComparisons?.length || 1} strateji aynı veri üzerinde ayrı backtest edildi.`,
         analysis.validation?.decisionDelta || "Rejim ve walk-forward strateji seçimi tamamlanamadı.",
         analysis.validation ? `Kanıt notu ${analysis.validation.evidenceGrade}; ${analysis.validation.oos.trades} dönem dışı işlem, dilim tutarlılığı %${analysis.validation.stabilityPct.toFixed(1)}, aşırı uyum riski ${analysis.validation.overfitRisk}.` : "Dönem dışı doğrulama yok.",
+        `Çoklu zaman: ${analysis.multiTimeframe?.summary || "hesaplanamadı"}; uyum %${finite(analysis.multiTimeframe?.alignmentScore).toFixed(1)}.`,
+        analysis.dataHealth?.passed ? `Veri sağlığı ${analysis.dataHealth.score.toFixed(0)}/100; OHLC, tekrar ve uç hareket kontrolleri geçti.` : `Veri karantinası: ${(analysis.dataHealth?.warnings || []).join(" · ")}.`,
         trendAgent?.detail || "Trend verisi hesaplandı.",
         momentumAgent?.detail || "Momentum verisi hesaplandı.",
         evaluation.watchEdge ? "Masraflar sonrası geçmiş test pozitif beklenti gösteriyor." : "Masraflar sonrası geçmiş test yeterli avantaj göstermiyor.",
@@ -936,7 +969,7 @@
     if (!marketGateOpen) reasons.push("Piyasa genişliği risk kapısı kapalı olduğu için YATIRMA.");
     if (!dataSufficient) reasons.push("Tarama kapsamı yetersiz olduğu için YATIRMA.");
     const gates = { ...item.gates, kap: kapGate, market: marketGate };
-    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
+    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", dataHealth: "Veri sağlığı", multiTimeframe: "Çoklu zaman", forecastReliability: "Tahmin güveni", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
     const gateDiagnostics = {
       ...(item.gateDiagnostics || {}),
       kap: {

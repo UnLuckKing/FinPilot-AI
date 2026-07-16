@@ -1,8 +1,20 @@
-# FinPilot AI v3.0
+# FinPilot AI v3.1 — Ultimate Research
 
 FinPilot AI; portföy takibi, yatırım bütçesi, varlık dağılımı, risk görünümü, hedefler ve açıklanabilir finansal analiz sunan Türkçe bir karar destek uygulamasıdır.
 
 > FinPilot yatırım danışmanlığı sunmaz, kâr garantisi vermez ve gerçek para işlemi yapmaz. Yerleşik fiyatlar demo veridir.
+
+## v3.1'de yeni
+
+- Bozuk, tekrarlı, eksik veya açıklanamayan uç mumları olumlu karardan önce karantinaya alan veri sağlığı kapısı
+- BIST'te gün/hafta/ay; kriptoda 4 saat/gün/hafta yönünü birlikte sınayan çoklu zaman teyidi
+- Hisseyi taranan BIST grubuna, kriptoyu hem kendi grubuna hem BTC'ye karşı ölçen göreli güç kapısı
+- Tahmin aralığı fazla genişse yüksek yön yüzdesine rağmen kararı kilitleyen tahmin güvenilirliği denetimi
+- Binance en iyi alış/satış fiyatından spread hesabı ve işlem kalitesi sınırı
+- Kâğıt sermayeden adet, pozisyon büyüklüğü, azami TL kayıp ve portföy şok senaryosu
+- Sonuçlar bozulduğunda performans veya kalibrasyon sürüklenmesini otomatik kilitleyen model sağlığı
+- “Ne değişti?” ve “YATIR için tam olarak ne gerekiyor?” alanlarını üreten karar günlüğü
+- TradingView Ultimate için 5 istek/10 çıktı sınırına uygun Pine Screener radarı ve limit emirli kâğıt strateji
 
 ## Kurulumsuz, doğrudan açılan sürüm
 
@@ -63,18 +75,24 @@ npm start
 - Trend devamı, geri çekilme, kırılım teyidi ve yatay piyasa dönüşü stratejilerini ayrı backtest eder; güncel rejime göre bir champion ve challenger seçer.
 - Sabit kurallı anchored walk-forward dilimleri, dönem dışı işlemler, olasılık kalibrasyonu, yaklaşık PBO ve Deflated Sharpe ile aşırı uyum riskini ölçer. Kanıt notu `A` veya `B` değilse olumlu sinyal açılmaz.
 - Momentum, hacim, masraflı backtest, yakın dönem davranışı ve 250 senaryolu Monte Carlo stres testi uygular.
+- OHLC bütünlüğü, tekrar zaman, açıklanamayan uç hareket ve veri boşluklarını sınar; sağlıksız veriyi fail-closed karantinaya alır.
+- Ana, orta ve üst zaman yönünü birlikte doğrular; göreli gücü taranan piyasa medyanına, kriptoda ayrıca BTC'ye göre ölçer.
+- Benzer dönem tahmininin aralığı aşırı genişse yüksek görünen olasılığı kullanmaz.
 - BIST temel oranlarını sektör ağırlıklarıyla karşılaştırır; veri kapsamı, likidite ve sektör örnek derinliğini ayrı temel sağlık bileşenleri olarak gösterir. KAP bildirimlerini olay türü, yön ve şirket büyüklüğüne göre önemlendirir; tanımlı ciddi riskler zorunlu kapıyı kapatır.
 - Kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı kapılardır.
+- Kriptoda Binance en iyi bid/ask verisinden spread hesaplar; 20 baz puanın üzerindeki veya doğrulanamayan spread olumlu kararı kapatır.
 - Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar; reddedilen her kapıda gerçekleşen değer ile gerekli eşiği sayısal olarak gösterir.
 - Destek geri çekilmesi, EMA yeniden testi ve ATR dengeli olmak üzere üç emir planı hesaplar. Fiyat adımına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef yalnızca geçerli `YATIR` sinyalinde etkinleşir.
 - Portföy kapısı açık kâğıt işlemleri hesaba katar; toplam pozisyon, BIST sektör yoğunluğu, kripto yoğunluğu ve aynı piyasadaki getiri korelasyonunu sınırlar.
+- Tek isteğe bağlı kâğıt sermaye tutarından azami `%0,50` risk bütçesiyle adet ve TL kaybı hesaplar; toplam stop riski `%2`, BIST `-%10`/kripto `-%20` şok kaybı `%12` sınırını geçerse yeni sinyali kilitler.
 - `Tümü`, `BIST`, `Kripto`, `Takip` ve `Geçmiş` sekmeleri vardır. Geçmişte sinyal önce `EMİR BEKLİYOR` olur; limit sonraki yeni kapanmış mumda görülürse `AKTİF` sayılır. İlk hedefte yarım çıkış ve maliyete taşınan stop ayrıca izlenir; aynı mumdaki stop/hedef çakışmasında stop önce kabul edilir.
 - Aynı piyasa ve stratejide en az 12 sonuç biriktiğinde pozitif sonuç oranı `%40`ın veya ortalama sonuç `0R`ın altına düşerse kâğıt performans koruması yeni olumlu sinyali kilitler. Bu izleme gerçek aracı kurum gerçekleşmesi değildir.
+- Kâğıt sonuçlardan Brier kalibrasyon hatasını da izler; model sağlığı sürüklenirse yeni olumlu kararı otomatik durdurur.
 - Bir piyasa kaynağı hata verse bile diğer piyasanın taraması devam eder. Eksik veya eski veriden olumlu sinyal üretilmez.
 - Yeni `YATIR` sonucu oluştuğunda ve takipteki bir varlık tek eksik kapıya yaklaştığında yerel Chrome bildirimi gösterir. Tarama, Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir.
 - İsteğe bağlı Pine Script v6 araçları yalnızca grafik teyidi içindir; TradingView'in fiyat/indikatör verisi için halka açık bir API'si olmadığından panel veriyi TradingView'den çekmez.
 
-Kurulum için [TRADINGVIEW-KURULUM.md](TRADINGVIEW-KURULUM.md) dosyasını izleyin veya Windows'ta `TRADINGVIEW-KURULUMUNU-AC.bat` dosyasını çalıştırın.
+Kurulum ve Ultimate ayarları için [TRADINGVIEW-KURULUM.md](TRADINGVIEW-KURULUM.md), değişiklik özeti için [V3.1-YENILIKLER.md](V3.1-YENILIKLER.md) dosyasını izleyin. Windows'ta `TRADINGVIEW-KURULUMUNU-AC.bat` dosyası kurulum klasörünü açar.
 
 ## Demo veri davranışı
 

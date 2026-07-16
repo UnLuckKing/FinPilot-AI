@@ -1,16 +1,16 @@
 //@version=6
-indicator("FinPilot Watchlist Scanner v2.0", shorttitle = "FinPilot Scanner", overlay = false, max_bars_back = 500)
+indicator("FinPilot Ultimate Radar v3.1", shorttitle = "FinPilot Ultimate", overlay = false, max_bars_back = 500)
 
-// TradingView Pine Screener icin aday bulma gostergesi.
-// Kararlar yalnizca kapanmis mumda olusur; sonuc veya kazanc garantisi vermez.
+// TradingView Pine Screener icin kapanmis mum, coklu zaman ve goreli guc radari.
+// Pine Screener ilk 10 plotu ve en fazla 5 request.* cagrisini kullanir.
+// Bu yalniz teknik on adaydir; nihai KAP, veri sagligi ve portfoy stresi Chrome panelindedir.
 
-string G_TREND = "1 — Trend"
-string G_SIGNAL = "2 — Sinyal"
+string G_TREND = "1 — Coklu Zaman"
+string G_SIGNAL = "2 — Sinyal ve Risk"
 string G_FINANCE = "3 — Finansal"
 
 int fastLen = input.int(21, "Hizli EMA", 5, 100, group = G_TREND)
 int slowLen = input.int(55, "Yavas EMA", 20, 250, group = G_TREND)
-string higherTf = input.string("1W", "Ust zaman dilimi", options = ["60", "240", "1D", "1W", "1M"], group = G_TREND)
 int adxLen = input.int(14, "DMI uzunlugu", 5, 50, group = G_TREND)
 int adxSmooth = input.int(14, "ADX yumusatma", 5, 50, group = G_TREND)
 float minAdx = input.float(18.0, "Minimum ADX", 5, 60, 0.5, group = G_TREND)
@@ -19,15 +19,21 @@ int rsiLen = input.int(14, "RSI uzunlugu", 5, 50, group = G_SIGNAL)
 int atrLen = input.int(14, "ATR uzunlugu", 5, 50, group = G_SIGNAL)
 int volumeLen = input.int(20, "Hacim ortalamasi", 5, 100, group = G_SIGNAL)
 int breakoutLen = input.int(20, "Kirilim penceresi", 5, 100, group = G_SIGNAL)
-float scoreThreshold = input.float(62.0, "Minimum puan", 40, 90, 1, group = G_SIGNAL)
-float maxAtrPct = input.float(8.0, "Maksimum volatilite (%)", 1.0, 20.0, 0.5, group = G_SIGNAL)
-bool allowShort = input.bool(false, "Short adaylari goster", group = G_SIGNAL)
+float scoreThreshold = input.float(64.0, "Minimum puan", 40, 90, 1, group = G_SIGNAL)
+float maxAtrPct = input.float(10.0, "Maksimum volatilite (%)", 1.0, 25.0, 0.5, group = G_SIGNAL)
+float maxSingleMovePct = input.float(25.0, "Tek mum azami hareket (%)", 5.0, 80.0, 1.0, group = G_SIGNAL)
 
-bool useFundamentals = input.bool(true, "Finansal veriyi kullan", tooltip = "Finansal veri bulunmazsa teknik puan tek basina kullanilir.", group = G_FINANCE)
+bool useFundamentals = input.bool(true, "Hisselerde finansal veriyi kullan", tooltip = "Kriptoda finansal seri yoksa teknik skor degismez.", group = G_FINANCE)
+
+string mediumTf = timeframe.isintraday ? "1D" : "1W"
+string higherTf = timeframe.isintraday ? "1W" : "1M"
+string benchmarkSymbol = syminfo.type == "crypto" ? "BINANCE:BTCUSDT" : "BIST:XU100"
 
 float emaFast = ta.ema(close, fastLen)
 float emaSlow = ta.ema(close, slowLen)
-[htfClose, htfEma] = request.security(syminfo.tickerid, higherTf, [close[1], ta.ema(close, slowLen)[1]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[mediumClose, mediumFast, mediumSlow] = request.security(syminfo.tickerid, mediumTf, [close[1], ta.ema(close, fastLen)[1], ta.ema(close, slowLen)[1]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[higherClose, higherFast, higherSlow] = request.security(syminfo.tickerid, higherTf, [close[1], ta.ema(close, fastLen)[1], ta.ema(close, slowLen)[1]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[benchmarkClose, benchmark20, benchmark60] = request.security(benchmarkSymbol, timeframe.period, [close[1], close[21], close[61]], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
 [plusDI, minusDI, adx] = ta.dmi(adxLen, adxSmooth)
 
 float rsi = ta.rsi(close, rsiLen)
@@ -37,66 +43,64 @@ float atrPct = close > 0 ? atr / close * 100.0 : na
 float volumeAverage = ta.sma(volume, volumeLen)
 float volumeRatio = na(volume) or na(volumeAverage) or volumeAverage == 0 ? 1.0 : volume / volumeAverage
 float previousHigh = ta.highest(high, breakoutLen)[1]
-float previousLow = ta.lowest(low, breakoutLen)[1]
 
-bool longTrend = emaFast > emaSlow and close > emaSlow and htfClose > htfEma
-bool shortTrend = emaFast < emaSlow and close < emaSlow and htfClose < htfEma
-bool trendRegime = adx >= minAdx
+bool primaryUp = emaFast > emaSlow and close > emaSlow
+bool mediumUp = mediumFast > mediumSlow and mediumClose > mediumSlow
+bool higherUp = higherFast > higherSlow and higherClose > higherSlow
+float mtfScore = (primaryUp ? 45.0 : 0.0) + (mediumUp ? 30.0 : 0.0) + (higherUp ? 25.0 : 0.0)
+bool mtfOk = mtfScore >= 75
+
+float assetReturn20 = close[20] > 0 ? (close / close[20] - 1.0) * 100.0 : na
+float benchmarkReturn20 = benchmark20 > 0 ? (benchmarkClose / benchmark20 - 1.0) * 100.0 : na
+float relative20 = assetReturn20 - benchmarkReturn20
+float assetReturn60 = close[60] > 0 ? (close / close[60] - 1.0) * 100.0 : na
+float benchmarkReturn60 = benchmark60 > 0 ? (benchmarkClose / benchmark60 - 1.0) * 100.0 : na
+float relative60 = assetReturn60 - benchmarkReturn60
+bool relativeOk = not na(relative20) and relative20 >= -2.0 and (na(relative60) or relative60 >= -5.0)
+
+float singleMovePct = close[1] > 0 ? math.abs(close / close[1] - 1.0) * 100.0 : 0.0
+bool ohlcOk = high >= math.max(open, close) and low <= math.min(open, close) and close > 0
+bool dataOk = chart.is_standard and ohlcOk and singleMovePct <= maxSingleMovePct
+float dataQuality = dataOk ? 100.0 : 0.0
 bool liquidEnough = volumeRatio >= 0.80
 bool volatilityOk = not na(atrPct) and atrPct > 0.15 and atrPct <= maxAtrPct
+bool trendRegime = adx >= minAdx and plusDI > minusDI
+
+float epsTtm = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", ignore_invalid_symbol = true)
+float freeCashFlow = request.financial(syminfo.tickerid, "FREE_CASH_FLOW", "TTM", ignore_invalid_symbol = true)
+bool fundamentalAvailable = not na(epsTtm) or not na(freeCashFlow)
+float fundamentalScore = fundamentalAvailable ? (not na(epsTtm) and epsTtm > 0 ? 50.0 : 0.0) + (not na(freeCashFlow) and freeCashFlow > 0 ? 50.0 : 0.0) : 50.0
 
 float longScore = 0.0
-longScore += emaFast > emaSlow ? 18.0 : 0.0
-longScore += close > emaFast ? 10.0 : 0.0
-longScore += htfClose > htfEma ? 16.0 : 0.0
-longScore += adx >= minAdx and plusDI > minusDI ? 14.0 : 0.0
-longScore += rsi >= 52 and rsi <= 72 ? 12.0 : 0.0
-longScore += macdHist > 0 and macdLine > macdSignal ? 12.0 : 0.0
+longScore += primaryUp ? 18.0 : 0.0
+longScore += mediumUp ? 12.0 : 0.0
+longScore += higherUp ? 10.0 : 0.0
+longScore += trendRegime ? 12.0 : 0.0
+longScore += rsi >= 52 and rsi <= 72 ? 10.0 : 0.0
+longScore += macdHist > 0 and macdLine > macdSignal ? 10.0 : 0.0
 longScore += liquidEnough ? 8.0 : 0.0
 longScore += close > previousHigh ? 10.0 : 0.0
-
-float shortScore = 0.0
-shortScore += emaFast < emaSlow ? 18.0 : 0.0
-shortScore += close < emaFast ? 10.0 : 0.0
-shortScore += htfClose < htfEma ? 16.0 : 0.0
-shortScore += adx >= minAdx and minusDI > plusDI ? 14.0 : 0.0
-shortScore += rsi <= 48 and rsi >= 28 ? 12.0 : 0.0
-shortScore += macdHist < 0 and macdLine < macdSignal ? 12.0 : 0.0
-shortScore += liquidEnough ? 8.0 : 0.0
-shortScore += close < previousLow ? 10.0 : 0.0
-
-// Screener siniri icinde toplam bes request.* cagrisi: bir HTF ve dort finansal seri.
-float epsTtm = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", ignore_invalid_symbol = true)
-float netIncomeTtm = request.financial(syminfo.tickerid, "NET_INCOME", "TTM", ignore_invalid_symbol = true)
-float currentRatio = request.financial(syminfo.tickerid, "CURRENT_RATIO", "FQ", ignore_invalid_symbol = true)
-float freeCashFlow = request.financial(syminfo.tickerid, "FREE_CASH_FLOW", "TTM", ignore_invalid_symbol = true)
-bool fundamentalAvailable = not na(epsTtm) or not na(netIncomeTtm) or not na(currentRatio) or not na(freeCashFlow)
-float fundamentalScore = 50.0
-if fundamentalAvailable
-    fundamentalScore := 0.0
-    fundamentalScore += not na(epsTtm) and epsTtm > 0 ? 30.0 : 0.0
-    fundamentalScore += not na(netIncomeTtm) and netIncomeTtm > 0 ? 25.0 : 0.0
-    fundamentalScore += not na(freeCashFlow) and freeCashFlow > 0 ? 25.0 : 0.0
-    fundamentalScore += not na(currentRatio) and currentRatio >= 1.0 ? 20.0 : 0.0
+longScore += relativeOk ? 10.0 : 0.0
 
 if useFundamentals and fundamentalAvailable
-    longScore := math.max(0.0, math.min(100.0, longScore + (fundamentalScore - 50.0) * 0.20))
-    shortScore := math.max(0.0, math.min(100.0, shortScore + (50.0 - fundamentalScore) * 0.20))
+    longScore := math.max(0.0, math.min(100.0, longScore + (fundamentalScore - 50.0) * 0.12))
 
-bool longCandidate = barstate.isconfirmed and chart.is_standard and longTrend and trendRegime and volatilityOk and longScore >= scoreThreshold
-bool shortCandidate = barstate.isconfirmed and chart.is_standard and allowShort and shortTrend and trendRegime and volatilityOk and shortScore >= scoreThreshold
-float decisionCode = longCandidate ? 1.0 : shortCandidate ? -1.0 : 0.0
-float bestScore = math.max(longScore, shortScore)
+bool longCandidate = barstate.isconfirmed and dataOk and mtfOk and relativeOk and trendRegime and volatilityOk and longScore >= scoreThreshold
+bool invalidated = barstate.isconfirmed and not longCandidate and longCandidate[1]
+float decisionCode = longCandidate ? 1.0 : 0.0
+float suggestedLimit = math.round(math.max(syminfo.mintick, close - atr * 0.18) / syminfo.mintick) * syminfo.mintick
+float suggestedStop = math.round(math.max(syminfo.mintick, suggestedLimit - atr * 2.0) / syminfo.mintick) * syminfo.mintick
 
-plot(decisionCode, "Ön karar (1 YATIR adayı, -1 SHORT, 0 YATIRMA)", color = decisionCode > 0 ? color.lime : decisionCode < 0 ? color.red : color.gray, linewidth = 2)
-plot(longScore, "Long Puan", color = color.new(color.lime, 0))
-plot(shortScore, "Short Puan", color = color.new(color.red, 0))
-plot(bestScore, "En Iyi Puan", color = color.new(color.aqua, 0))
-plot(fundamentalAvailable ? fundamentalScore : na, "Finansal Puan", color = color.new(color.blue, 0))
+plot(decisionCode, "On karar (1 YATIR adayi, 0 YATIRMA)", color = longCandidate ? color.lime : color.gray, linewidth = 2)
+plot(longScore, "Birlesik Puan", color = color.new(color.lime, 0))
+plot(mtfScore, "Coklu Zaman Uyum", color = color.new(color.aqua, 0))
+plot(relative20, "20 Bar Goreli Guc %", color = color.new(color.blue, 0))
+plot(fundamentalAvailable ? fundamentalScore : na, "Finansal Puan", color = color.new(color.purple, 0))
+plot(dataQuality, "Veri Sagligi", color = color.new(color.teal, 0))
 plot(atrPct, "ATR %", color = color.new(color.orange, 0))
 plot(adx, "ADX", color = color.new(color.yellow, 0))
-plot(rsi, "RSI", color = color.new(color.purple, 0))
-plot(volumeRatio, "Hacim Orani", color = color.new(color.fuchsia, 0))
+plot(longCandidate ? suggestedLimit : na, "On Alis Limiti", color = color.new(color.lime, 20))
+plot(longCandidate ? suggestedStop : na, "On Stop", color = color.new(color.red, 0))
 
-alertcondition(longCandidate, "FinPilot YATIR ön adayı", "{{ticker}} {{interval}} FinPilot YATIR ön adayı — nihai KAP ve stres kontrolü Chrome panelindedir")
-alertcondition(shortCandidate, "FinPilot SHORT adayi", "{{ticker}} {{interval}} FinPilot SHORT adayi")
+alertcondition(longCandidate, "FinPilot YATIR ön adayı", "{{exchange}}:{{ticker}} {{interval}} FinPilot v3.1 YATIR ön adayı — çoklu zaman ve göreli güç geçti; nihai KAP/stres Chrome panelinde")
+alertcondition(invalidated, "FinPilot aday bozuldu", "{{exchange}}:{{ticker}} {{interval}} FinPilot v3.1 aday koşulları bozuldu")

@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 require("./market-aggregator.js");
 require("./near-watch.js");
 require("./portfolio-risk.js");
+require("./decision-intelligence.js");
 
 class FakeElement {
   constructor() {
@@ -10,6 +11,7 @@ class FakeElement {
     this.hidden = false;
     this.disabled = false;
     this.style = {};
+    this.value = "";
     this.listeners = {};
     this.classes = new Set();
     this.classList = { toggle: (name, force) => force ? this.classes.add(name) : this.classes.delete(name) };
@@ -20,9 +22,9 @@ class FakeElement {
 const ids = [
   "pageStatus", "activeChart", "progressCard", "runScan", "progressTitle", "progressText", "progressFill",
   "emptyState", "resultArea", "marketDecision", "marketMeta", "candidateCount", "marketDecisionCard",
-  "scannedCount", "bistScanned", "cryptoScanned", "marketBreadth", "dataAsOf", "generatedAt", "kapCheckedCount", "evidenceACount", "paperOpenCount",
-  "tabAll", "tabBist", "tabCrypto", "tabWatch", "tabHistory", "allCount", "bistCount", "cryptoCount", "watchCount", "historyCount",
-  "recommendationTitle", "universeLabel", "recommendations", "historyPanel", "errorDetails", "errorCount", "errorList",
+    "scannedCount", "bistScanned", "cryptoScanned", "marketBreadth", "dataAsOf", "generatedAt", "kapCheckedCount", "evidenceACount", "paperOpenCount", "dataHealthCount", "modelHealthStatus", "portfolioStressPct", "paperCapital",
+  "tabAll", "tabBist", "tabCrypto", "tabWatch", "tabHistory", "tabJournal", "allCount", "bistCount", "cryptoCount", "watchCount", "historyCount", "journalCount",
+  "recommendationTitle", "universeLabel", "recommendations", "historyPanel", "journalPanel", "errorDetails", "errorCount", "errorList",
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
 global.document = { getElementById: (id) => elements[id] };
@@ -54,6 +56,7 @@ const cached = {
     crypto: { universe: "Binance likit USDT spot evreni", scannedCount: 130, requestedCount: 140, marketDecision: "YATIRMA · tüm koşulları geçen kripto yok", marketRegime: { gateOpen: true } },
   },
   signalHistory: { stats: { open: 1, pending: 1, active: 0, resolved: 0, totalR: 0, winRate: null, averageR: null }, note: "Gerçek işlem kaydı değildir.", records: [{ key: "bist:THYAO", market: "bist", marketLabel: "BIST", symbol: "THYAO", displaySymbol: "THYAO", createdAt: "2026-07-16T08:00:00Z", entry: 309, lastPrice: 312.5, status: "EMİR BEKLİYOR" }] },
+  decisionJournal: { entries: [{ at: "2026-07-16T09:00:00Z", market: "bist", symbol: "THYAO", displaySymbol: "THYAO", action: "YATIR", summary: "karar YATIRMA → YATIR", next: "Limit emri koşulu izleniyor." }] },
 };
 
 global.chrome = {
@@ -79,7 +82,7 @@ setTimeout(() => {
     assert.match(elements.recommendations.innerHTML, /1 gün yükseliş %51\/%56 gerekli/);
     assert.match(elements.recommendations.innerHTML, /Geri çekilme/);
     assert.match(elements.recommendations.innerHTML, /NE DEĞİŞMELİ|YATIR'A 1 KAPI KALDI/);
-    assert.match(elements.recommendations.innerHTML, /KANIT DOSYASI v3/);
+    assert.match(elements.recommendations.innerHTML, /KANIT DOSYASI v3\.1/);
     assert.match(elements.recommendations.innerHTML, /Walk-forward/);
     assert.match(elements.recommendations.innerHTML, /KÂĞIT EMİR/);
     assert.equal(elements.kapCheckedCount.textContent, "12/12");
@@ -94,6 +97,10 @@ setTimeout(() => {
     elements.tabHistory.listeners.click();
     assert.equal(elements.historyPanel.hidden, false);
     assert.match(elements.historyPanel.innerHTML, /Gerçek işlem kaydı değildir/);
+    elements.tabJournal.listeners.click();
+    assert.equal(elements.journalPanel.hidden, false);
+    assert.match(elements.journalPanel.innerHTML, /karar YATIRMA → YATIR/);
+    assert.equal(elements.journalCount.textContent, 1);
     assert.equal(elements.runScan.disabled, false);
     assert.equal(typeof elements.runScan.listeners.click, "function");
     console.log("FinPilot panel runtime checks: OK");

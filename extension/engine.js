@@ -14,6 +14,12 @@
     breakout: { id: "breakout", label: "Kırılım teyidi", thresholdOffset: 2 },
     meanReversion: { id: "meanReversion", label: "Yatay piyasa dönüşü", thresholdOffset: 3 },
   });
+  const EVIDENCE_RANK = Object.freeze({ A: 0, B: 1, C: 2, D: 3 });
+
+  function conservativeEvidenceGrade(...grades) {
+    const clean = grades.map((grade) => String(grade || "D").toUpperCase()).filter((grade) => Object.hasOwn(EVIDENCE_RANK, grade));
+    return clean.length ? clean.sort((left, right) => EVIDENCE_RANK[right] - EVIDENCE_RANK[left])[0] : "D";
+  }
 
   function quantile(values, percentile) {
     const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
@@ -164,6 +170,122 @@
     return value;
   }
 
+  function aggregateRows(rows, groupSize) {
+    const size = Math.max(1, Math.floor(finite(groupSize, 1)));
+    if (!Array.isArray(rows) || rows.length < size) return [];
+    const output = [];
+    const offset = rows.length % size;
+    for (let start = offset; start + size <= rows.length; start += size) {
+      const group = rows.slice(start, start + size);
+      const first = group[0];
+      const last = group[group.length - 1];
+      output.push({
+        time: first.time,
+        timestamp: first.timestamp,
+        closedAt: last.closedAt,
+        open: finite(first.open),
+        high: Math.max(...group.map((row) => finite(row.high, -Infinity))),
+        low: Math.min(...group.map((row) => finite(row.low, Infinity))),
+        close: finite(last.close),
+        volume: group.reduce((sum, row) => sum + Math.max(0, finite(row.volume)), 0),
+      });
+    }
+    return output.filter((row) => [row.open, row.high, row.low, row.close].every(Number.isFinite) && row.high >= row.low && row.close > 0);
+  }
+
+  function timeframeTrend(rows, label, fastLength = 5, slowLength = 13) {
+    const minimum = Math.max(slowLength + 3, 18);
+    if (!Array.isArray(rows) || rows.length < minimum) return { available: false, label, direction: 0, score: 0, reason: `${label} için en az ${minimum} kapanmış mum gerekli.` };
+    const closes = rows.map((row) => finite(row.close, NaN));
+    if (!closes.every(Number.isFinite)) return { available: false, label, direction: 0, score: 0, reason: `${label} kapanış dizisi geçersiz.` };
+    const fast = ema(closes, fastLength);
+    const slow = ema(closes, slowLength);
+    const index = closes.length - 1;
+    const slopeIndex = Math.max(0, index - 3);
+    const slope = slow[index] - slow[slopeIndex];
+    const direction = fast[index] > slow[index] && closes[index] >= slow[index] && slope >= 0
+      ? 1
+      : fast[index] < slow[index] && closes[index] <= slow[index] && slope <= 0
+        ? -1
+        : 0;
+    const distancePct = slow[index] ? (fast[index] / slow[index] - 1) * 100 : 0;
+    const score = clamp(50 + Math.sign(direction) * 28 + clamp(distancePct * 10, -18, 18), 0, 100);
+    return { available: true, label, direction, score, close: closes[index], fast: fast[index], slow: slow[index], slope, distancePct };
+  }
+
+  function multiTimeframeAnalysis(rows, settings = {}) {
+    const isCrypto = settings.market === "crypto";
+    const groups = Array.isArray(settings.timeframeGroups) && settings.timeframeGroups.length >= 2
+      ? settings.timeframeGroups.slice(0, 2).map((value) => Math.max(2, Math.floor(finite(value, 2))))
+      : isCrypto ? [6, 42] : [5, 20];
+    const labels = Array.isArray(settings.timeframeLabels) && settings.timeframeLabels.length >= 3
+      ? settings.timeframeLabels.slice(0, 3)
+      : isCrypto ? ["4 saat", "1 gün", "1 hafta"] : ["1 gün", "1 hafta", "1 ay"];
+    const primary = timeframeTrend(rows, labels[0], 13, 34);
+    const medium = timeframeTrend(aggregateRows(rows, groups[0]), labels[1]);
+    const higher = timeframeTrend(aggregateRows(rows, groups[1]), labels[2]);
+    const available = primary.available && medium.available && higher.available;
+    const alignmentScore = available ? primary.score * 0.45 + medium.score * 0.30 + higher.score * 0.25 : 0;
+    const passed = available && primary.direction >= 0 && medium.direction >= 0 && higher.direction >= 0 && alignmentScore >= 58;
+    return {
+      available,
+      passed,
+      alignmentScore,
+      groups,
+      labels,
+      primary,
+      medium,
+      higher,
+      directions: [primary.direction, medium.direction, higher.direction],
+      summary: available
+        ? `${labels[0]} ${primary.direction > 0 ? "yukarı" : primary.direction < 0 ? "aşağı" : "yatay"} · ${labels[1]} ${medium.direction > 0 ? "yukarı" : medium.direction < 0 ? "aşağı" : "yatay"} · ${labels[2]} ${higher.direction > 0 ? "yukarı" : higher.direction < 0 ? "aşağı" : "yatay"}`
+        : "Çoklu zaman dilimi için yeterli kapanmış mum yok.",
+    };
+  }
+
+  function assessDataHealth(rows, settings = {}) {
+    const market = settings.market === "crypto" ? "crypto" : "bist";
+    const minimumRows = Math.max(120, Math.floor(finite(settings.minimumHealthRows, 120)));
+    const timestamps = [];
+    let invalidOhlc = 0;
+    let zeroVolume = 0;
+    for (const row of rows || []) {
+      const values = [row?.open, row?.high, row?.low, row?.close].map(Number);
+      if (!values.every(Number.isFinite) || values[3] <= 0 || values[1] < Math.max(values[0], values[3]) || values[2] > Math.min(values[0], values[3])) invalidOhlc += 1;
+      if (finite(row?.volume) <= 0) zeroVolume += 1;
+      const timestamp = Number.isFinite(Number(row?.timestamp)) ? Number(row.timestamp) : Date.parse(row?.time || "");
+      if (Number.isFinite(timestamp)) timestamps.push(timestamp);
+    }
+    const duplicateTimes = timestamps.length - new Set(timestamps).size;
+    const returns = [];
+    for (let index = 1; index < (rows || []).length; index += 1) {
+      const previous = finite(rows[index - 1]?.close, NaN);
+      const current = finite(rows[index]?.close, NaN);
+      if (previous > 0 && current > 0) returns.push((current / previous - 1) * 100);
+    }
+    const returnMedian = quantile(returns, 0.5);
+    const absoluteDeviations = returns.map((value) => Math.abs(value - returnMedian));
+    const mad = quantile(absoluteDeviations, 0.5);
+    const robustLimit = Math.max(market === "crypto" ? 55 : 35, mad * 12);
+    const recentReturns = returns.slice(-120);
+    const extremeMoves = recentReturns.filter((value) => Math.abs(value - returnMedian) > robustLimit).length;
+    const deltas = timestamps.slice(1).map((timestamp, index) => timestamp - timestamps[index]).filter((value) => value > 0);
+    const medianDelta = quantile(deltas, 0.5);
+    const gapMultiplier = market === "crypto" ? 1.75 : 5.5;
+    const abnormalGaps = medianDelta > 0 ? deltas.slice(-120).filter((value) => value > medianDelta * gapMultiplier).length : 0;
+    const zeroVolumePct = rows?.length ? zeroVolume / rows.length * 100 : 100;
+    const score = clamp(100 - invalidOhlc * 35 - duplicateTimes * 25 - extremeMoves * 28 - abnormalGaps * 8 - Math.max(0, zeroVolumePct - 5) * 0.5, 0, 100);
+    const passed = (rows?.length || 0) >= minimumRows && invalidOhlc === 0 && duplicateTimes === 0 && extremeMoves === 0 && abnormalGaps <= 2 && zeroVolumePct <= 35;
+    const warnings = [];
+    if ((rows?.length || 0) < minimumRows) warnings.push(`${rows?.length || 0}/${minimumRows} mum`);
+    if (invalidOhlc) warnings.push(`${invalidOhlc} bozuk OHLC`);
+    if (duplicateTimes) warnings.push(`${duplicateTimes} tekrar zaman`);
+    if (extremeMoves) warnings.push(`${extremeMoves} açıklanamayan uç hareket`);
+    if (abnormalGaps > 2) warnings.push(`${abnormalGaps} zaman boşluğu`);
+    if (zeroVolumePct > 35) warnings.push(`hacimsiz mum %${zeroVolumePct.toFixed(0)}`);
+    return { market, passed, score, sampleSize: rows?.length || 0, minimumRows, invalidOhlc, duplicateTimes, extremeMoves, abnormalGaps, zeroVolumePct, robustMoveLimitPct: robustLimit, warnings, status: passed ? "SAĞLIKLI" : "KARANTİNA" };
+  }
+
   function featureMatrix(rows, settings = {}) {
     const fastLen = finite(settings.fastLen, 21);
     const slowLen = finite(settings.slowLen, 55);
@@ -306,6 +428,12 @@
         ? "DÜŞÜŞ"
         : "YATAY";
     const averageDistance = mean(selected.map((item) => item.distance));
+    const expectedLowPct = quantile(returns, 0.20);
+    const expectedMedianPct = quantile(returns, 0.50);
+    const expectedHighPct = quantile(returns, 0.80);
+    const intervalWidthPct = expectedHighPct - expectedLowPct;
+    const maximumIntervalWidthPct = clamp(latest.atrPct * Math.sqrt(bars) * 3.2, 6, settings.market === "crypto" ? 60 : 45);
+    const reliable = selected.length >= 36 && averageDistance <= 1.8 && intervalWidthPct <= maximumIntervalWidthPct;
     return {
       available: true,
       horizon: bars,
@@ -313,9 +441,13 @@
       probabilityUp,
       probabilityDown,
       probabilityFlat,
-      expectedLowPct: quantile(returns, 0.20),
-      expectedMedianPct: quantile(returns, 0.50),
-      expectedHighPct: quantile(returns, 0.80),
+      expectedLowPct,
+      expectedMedianPct,
+      expectedHighPct,
+      intervalWidthPct,
+      maximumIntervalWidthPct,
+      reliable,
+      reliability: reliable ? "KULLANILABİLİR" : "DÜŞÜK",
       analogCount: selected.length,
       quality: selected.length >= 48 && averageDistance <= 1.25 ? "Orta-yüksek" : selected.length >= 36 ? "Orta" : "Düşük",
     };
@@ -763,6 +895,8 @@
     const features = prepared?.features || featureMatrix(rows, settings);
     const backtestResult = backtest(rows, features, settings);
     const model = prepared?.model || trainLocalModel(rows, features, settings);
+    const dataHealth = prepared?.dataHealth || assessDataHealth(rows, settings);
+    const multiTimeframe = prepared?.multiTimeframe || multiTimeframeAnalysis(rows, settings);
     const forecastHorizons = Array.isArray(settings.forecastHorizons)
       ? [...new Set(settings.forecastHorizons.map((value) => Math.max(1, Math.floor(finite(value)))).filter(Number.isFinite))].slice(0, 4)
       : [1, 5, 20];
@@ -795,11 +929,15 @@
       { name: "ML Ajanı", status: model.available ? model.quality : "Veri yetersiz", score: model.available ? clamp(model.outOfSampleAccuracy, 0, 100) : 0, detail: model.available ? `Test doğruluğu %${model.outOfSampleAccuracy.toFixed(1)}, Brier ${model.brierScore.toFixed(3)}.` : model.reason },
       { name: "Yön Ajanı", status: primaryForecast?.available ? primaryForecast.direction : "Veri yetersiz", score: primaryForecast?.available ? primaryForecast.probabilityUp : 0, detail: primaryForecast?.available ? `${settings.primaryHorizonLabel || `${primaryHorizon} bar`}: yükseliş %${primaryForecast.probabilityUp.toFixed(1)}, düşüş %${primaryForecast.probabilityDown.toFixed(1)}, yatay %${primaryForecast.probabilityFlat.toFixed(1)}.` : primaryForecast?.reason },
       { name: "Stres Denetçisi", status: backtestResult.stress.available ? (backtestResult.stress.profitablePct >= 60 ? "Geçti" : "Zayıf") : "Veri yetersiz", score: backtestResult.stress.available ? backtestResult.stress.profitablePct : 0, detail: backtestResult.stress.available ? `${backtestResult.stress.iterations} Monte Carlo yolu; pozitif kapanış %${backtestResult.stress.profitablePct.toFixed(1)}, kötü %10 net ${backtestResult.stress.p10NetR.toFixed(2)}R.` : backtestResult.stress.reason },
+      { name: "Veri Sağlığı", status: dataHealth.status, score: dataHealth.score, detail: dataHealth.passed ? `${dataHealth.sampleSize} mum; OHLC, tekrar, uç hareket ve zaman boşluğu kontrolleri geçti.` : dataHealth.warnings.join(" · ") },
+      { name: "Çoklu Zaman", status: multiTimeframe.passed ? "Uyumlu" : "Çelişkili", score: multiTimeframe.alignmentScore, detail: multiTimeframe.summary },
     ];
     return {
       latest,
       backtest: backtestResult,
       model,
+      dataHealth,
+      multiTimeframe,
       forecasts,
       primaryHorizon,
       strategy: activeStrategy,
@@ -823,12 +961,14 @@
     const safeModes = modes.length ? [...new Set(modes)] : ["trend"];
     const features = featureMatrix(rows, settings);
     const model = trainLocalModel(rows, features, settings);
+    const dataHealth = assessDataHealth(rows, settings);
+    const multiTimeframe = multiTimeframeAnalysis(rows, settings);
     const forecastHorizons = Array.isArray(settings.forecastHorizons)
       ? [...new Set(settings.forecastHorizons.map((value) => Math.max(1, Math.floor(finite(value)))).filter(Number.isFinite))].slice(0, 4)
       : [1, 5, 20];
     const safeHorizons = forecastHorizons.length ? forecastHorizons : [1, 5, 20];
     const forecasts = safeHorizons.map((horizon) => analogForecast(rows, features, horizon, settings));
-    const prepared = { features, model, forecasts };
+    const prepared = { features, model, forecasts, dataHealth, multiTimeframe };
     const regime = classifyRegime(features);
     const baseThreshold = finite(settings.threshold, 62);
     const analyses = safeModes.map((mode) => {
@@ -866,14 +1006,20 @@
     if (selectedMetrics.testedTrades >= 20 && selectedMetrics.expectancyR > 0.10 && selectedMetrics.stabilityPct >= 75 && selectedDsr.available && selectedDsr.probability >= 0.80) selectedGrade = "A";
     else if (selectedMetrics.testedTrades >= 12 && selectedMetrics.expectancyR > 0 && selectedMetrics.stabilityPct >= 50 && selectedDsr.available && selectedDsr.probability >= 0.55) selectedGrade = "B";
     else if (selectedMetrics.testedTrades >= 8 && selectedMetrics.expectancyR > 0 && selectedMetrics.stabilityPct >= 50) selectedGrade = "C";
+    const overallGrade = validation.evidenceGrade;
+    const finalGrade = conservativeEvidenceGrade(selectedGrade, overallGrade);
     const selectedValidation = {
       ...validation,
       selectedStrategy: selected.strategy.mode,
       selectedStrategyLabel: selected.strategy.label,
       selectedStrategyMetrics: selectedMetrics,
       selectedDeflatedSharpe: selectedDsr,
-      evidenceGrade: selectedGrade,
-      passed: validation.passed && (selectedGrade === "A" || selectedGrade === "B"),
+      selectedEvidenceGrade: selectedGrade,
+      overallEvidenceGrade: overallGrade,
+      evidenceGrade: finalGrade,
+      requiredOosTrades: 12,
+      oosProgress: `${validation.oos.trades}/12`,
+      passed: finalGrade === "A" || finalGrade === "B",
       decisionDelta: naiveLeader.strategy.mode === selected.strategy.mode
         ? `Rejim ve dönem dışı test, ilk sıradaki ${selected.strategy.label} modelini korudu.`
         : `Geçmiş puanın lideri ${naiveLeader.strategy.label} iken rejim ve dönem dışı test ${selected.strategy.label} modelini öne aldı.`,
@@ -917,5 +1063,5 @@
     };
   }
 
-  return { STRATEGY_LIBRARY, parseCsv, analyze, analyzeStrategies, strategySetup, riskPlan, wilsonInterval, featureMatrix, backtest, trainLocalModel, analogForecast, monteCarloStress, classifyRegime, regimeCompatibility, chronologicalValidation, deflatedSharpeApproximation };
+  return { STRATEGY_LIBRARY, parseCsv, analyze, analyzeStrategies, strategySetup, riskPlan, wilsonInterval, featureMatrix, backtest, trainLocalModel, analogForecast, monteCarloStress, classifyRegime, regimeCompatibility, chronologicalValidation, deflatedSharpeApproximation, aggregateRows, timeframeTrend, multiTimeframeAnalysis, assessDataHealth, conservativeEvidenceGrade };
 });
