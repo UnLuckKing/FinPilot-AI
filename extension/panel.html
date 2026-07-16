@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FinPilot BIST Otopilot</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">F</span><div><b>FinPilot Otopilot</b><small>BIST otomatik öneri motoru</small></div></div>
+    <span class="live-dot" id="pageStatus">Hazır</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="source-line"><span>RESMÎ + AÇIK KAYNAKLAR</span><b>İş Yatırım · Borsa İstanbul · KAP</b></div>
+      <h1>Hisseleri kendi tarar.<br><em>Risk varsa sinyali kilitler.</em></h1>
+      <p>Üç vadeli yön modeli, temel değerleme, masraflı backtest, stres testi ve KAP kontrolü tek araştırmada birleşir.</p>
+      <button class="scan-button" id="runScan"><span>✦</span><b>ŞİMDİ OTOMATİK ARAŞTIR</b><small>Tek tık · manuel fiyat veya CSV yok</small></button>
+      <div class="auto-note"><i></i><span>Chrome açıkken 12 saatte bir arka planda yenilenir.</span></div>
+    </section>
+
+    <section class="progress-card" id="progressCard" hidden>
+      <div class="spinner"></div>
+      <div><b id="progressTitle">BIST hisseleri taranıyor</b><p id="progressText">İş Yatırım verileri alınıyor…</p></div>
+      <div class="progress-track"><i id="progressFill"></i></div>
+    </section>
+
+    <section class="empty-card" id="emptyState">
+      <span>◇</span><h2>İlk otomatik tarama hazırlanıyor</h2><p>Panel açıldığında son sonuç yüklenir. Kayıt yoksa tarama kendiliğinden başlar.</p>
+    </section>
+
+    <div id="resultArea" hidden>
+      <section class="market-decision" id="marketDecisionCard">
+        <div><small>SİSTEM KARARI</small><h2 id="marketDecision">—</h2><p id="marketMeta">—</p></div>
+        <div class="decision-count"><b id="candidateCount">0</b><span>YATIR sinyali</span></div>
+      </section>
+
+      <section class="summary-grid">
+        <article><span>Taranan</span><b id="scannedCount">—</b></article>
+        <article><span>Piyasa genişliği</span><b id="marketBreadth">—</b></article>
+        <article><span>Veri tarihi</span><b id="dataAsOf">—</b></article>
+        <article><span>Yenilenme</span><b id="generatedAt">—</b></article>
+        <article><span>KAP doğrulanan</span><b id="kapCheckedCount">—</b></article>
+        <article><span>Çalışma modu</span><b>Hata varsa YATIRMA</b></article>
+      </section>
+
+      <div class="section-head"><div><small>SIRALAMA</small><h2>En güçlü hisseler</h2></div><span id="universeLabel">BIST</span></div>
+      <section class="recommendations" id="recommendations"></section>
+
+      <details class="error-details" id="errorDetails" hidden>
+        <summary><span id="errorCount">0</span> veri uyarısı</summary>
+        <ul id="errorList"></ul>
+      </details>
+    </div>
+
+    <section class="method-card">
+      <div class="method-title"><span>8</span><div><small>KONTROL KURULU</small><h2>Karar nasıl oluşuyor?</h2></div></div>
+      <div class="method-list">
+        <p><i>1</i><span><b>Veri</b> · Tazelik ve kapsam</span></p>
+        <p><i>2</i><span><b>Trend</b> · EMA ve piyasa yönü</span></p>
+        <p><i>3</i><span><b>Momentum</b> · RSI, MACD, hacim</span></p>
+        <p><i>4</i><span><b>Temel</b> · Sektör içi değerleme</span></p>
+        <p><i>5</i><span><b>Yön</b> · 1, 5 ve 20 gün</span></p>
+        <p><i>6</i><span><b>Backtest</b> · Masraf ve gap</span></p>
+        <p><i>7</i><span><b>Stres</b> · Monte Carlo yolları</span></p>
+        <p><i>8</i><span><b>KAP</b> · Yakın risk bildirimi</span></p>
+      </div>
+    </section>
+
+    <section class="warning"><b>Emir göndermez.</b><span>Bir veri veya güvenlik kapısı doğrulanmazsa sistem YATIRMA der. Stop-limit sert fiyat boşluğunda gerçekleşmeyebilir; kazanç garantisi yoktur.</span></section>
+  </main>
+
+  <footer><a href="https://kap.org.tr/tr/bildirim-sorgu" target="_blank" rel="noreferrer">KAP bildirimleri ↗</a><span id="activeChart">TradingView</span></footer>
+  <script src="engine.js"></script>
+  <script src="auto-scanner.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

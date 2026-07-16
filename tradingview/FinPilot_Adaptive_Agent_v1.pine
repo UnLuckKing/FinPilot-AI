@@ -1,0 +1,344 @@
+//@version=6
+//@strategy_alert_message {{strategy.order.alert_message}}
+strategy(
+     "FinPilot Adaptive Agent v1.2 — Paper Trading",
+     shorttitle = "FinPilot Agent",
+     overlay = true,
+     initial_capital = 100000,
+     pyramiding = 0,
+     commission_type = strategy.commission.percent,
+     commission_value = 0.10,
+     slippage = 2,
+     process_orders_on_close = true,
+     calc_on_order_fills = true,
+     use_bar_magnifier = true,
+     margin_long = 100,
+     margin_short = 100
+)
+
+// FinPilot is a decision-support and paper-trading strategy. It does not guarantee future results.
+
+string G_TREND = "1 — Trend Ajanı"
+string G_MOMENTUM = "2 — Momentum Ajanı"
+string G_FUNDAMENTAL = "3 — Finansal Araştırma Ajanı"
+string G_RISK = "4 — Risk Yöneticisi"
+string G_EXECUTION = "5 — İşlem Yöneticisi"
+string G_GUARDS = "6 — Koruma Kuralları"
+string G_DISPLAY = "7 — Görünüm"
+
+int fastLen = input.int(21, "Hızlı EMA", 5, 100, group = G_TREND)
+int slowLen = input.int(55, "Yavaş EMA", 20, 250, group = G_TREND)
+string higherTf = input.timeframe("1D", "Üst zaman dilimi", group = G_TREND)
+int adxLen = input.int(14, "DMI uzunluğu", 5, 50, group = G_TREND)
+int adxSmooth = input.int(14, "ADX yumuşatma", 5, 50, group = G_TREND)
+float minAdx = input.float(18.0, "Minimum ADX", 5, 60, 0.5, group = G_TREND)
+
+int rsiLen = input.int(14, "RSI uzunluğu", 5, 50, group = G_MOMENTUM)
+int macdFast = input.int(12, "MACD hızlı", 3, 50, group = G_MOMENTUM)
+int macdSlow = input.int(26, "MACD yavaş", 5, 100, group = G_MOMENTUM)
+int macdSignal = input.int(9, "MACD sinyal", 2, 50, group = G_MOMENTUM)
+int volumeLen = input.int(20, "Hacim ortalaması", 5, 100, group = G_MOMENTUM)
+int breakoutLen = input.int(20, "Kırılım penceresi", 5, 100, group = G_MOMENTUM)
+float scoreThreshold = input.float(62.0, "Minimum kurulum puanı", 40, 90, 1, group = G_MOMENTUM)
+
+bool useFundamentals = input.bool(true, "Hisselerde finansal veriyi kullan", tooltip = "Kripto, döviz veya finansal verisi olmayan sembollerde teknik analiz tek başına devam eder.", group = G_FUNDAMENTAL)
+string fiscalPeriod = input.string("FQ", "Bilanço dönemi", options = ["FQ", "FH", "FY"], group = G_FUNDAMENTAL)
+
+float baseRiskPct = input.float(0.50, "İşlem başına risk (%)", 0.10, 2.00, 0.05, group = G_RISK)
+float maxPositionPct = input.float(25.0, "Azami pozisyon büyüklüğü (%)", 1.0, 100.0, 1.0, tooltip = "Tek pozisyonun strateji özkaynağındaki üst sınırı.", group = G_RISK)
+int atrLen = input.int(14, "ATR uzunluğu", 5, 50, group = G_RISK)
+float stopAtr = input.float(2.0, "Stop ATR çarpanı", 0.5, 6.0, 0.1, group = G_RISK)
+float target1R = input.float(1.2, "Hedef 1 (R)", 0.5, 5.0, 0.1, group = G_RISK)
+float target2R = input.float(2.0, "Hedef 2 (R)", 0.8, 8.0, 0.1, group = G_RISK)
+float trailAtr = input.float(2.2, "Trailing stop ATR", 0.5, 6.0, 0.1, group = G_RISK)
+float maxAtrPct = input.float(8.0, "Maksimum volatilite (%)", 1.0, 20.0, 0.5, group = G_RISK)
+bool integerQty = input.bool(true, "Adedi tam sayıya yuvarla (hisse)", group = G_RISK)
+
+bool allowLong = input.bool(true, "Long işlemlere izin ver", group = G_EXECUTION)
+bool allowShort = input.bool(false, "Short işlemlere izin ver", tooltip = "Spot BIST işlemleri için kapalı bırakın.", group = G_EXECUTION)
+int cooldownBars = input.int(5, "İşlem sonrası bekleme (bar)", 0, 100, group = G_EXECUTION)
+bool useSession = input.bool(false, "Yalnızca belirlenen seansta işlem", group = G_EXECUTION)
+string tradeSession = input.session("1000-1800:23456", "İşlem seansı", group = G_EXECUTION)
+
+float maxDailyLoss = input.float(2.0, "Günlük maksimum kayıp (%)", 0.5, 10.0, 0.25, group = G_GUARDS)
+float maxDrawdown = input.float(12.0, "Maksimum portföy düşüşü (%)", 2.0, 40.0, 0.5, group = G_GUARDS)
+int maxLossStreak = input.int(3, "Azami kayıp serisi", 1, 8, group = G_GUARDS)
+int streakPauseBars = input.int(20, "Kayıp serisi sonrası bekleme", 1, 500, group = G_GUARDS)
+int minClosedTrades = input.int(30, "Olasılık için minimum işlem", 5, 500, group = G_GUARDS)
+
+bool showDashboard = input.bool(true, "Ajan panelini göster", group = G_DISPLAY)
+bool showBackground = input.bool(true, "Piyasa rejimini renklendir", group = G_DISPLAY)
+bool showLevels = input.bool(true, "Stop ve hedefleri göster", group = G_DISPLAY)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent 1: Trend and market regime
+// ─────────────────────────────────────────────────────────────────────────────
+float emaFast = ta.ema(close, fastLen)
+float emaSlow = ta.ema(close, slowLen)
+// [1] + lookahead_on returns the last confirmed HTF bar without leaking future data.
+float htfClose = request.security(syminfo.tickerid, higherTf, close[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+float htfEma = request.security(syminfo.tickerid, higherTf, ta.ema(close, slowLen)[1], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_on)
+[plusDI, minusDI, adx] = ta.dmi(adxLen, adxSmooth)
+bool longTrend = emaFast > emaSlow and close > emaSlow and htfClose > htfEma
+bool shortTrend = emaFast < emaSlow and close < emaSlow and htfClose < htfEma
+bool trendRegime = adx >= minAdx
+
+// Agent 2: Momentum, liquidity, breakout and volatility
+float rsi = ta.rsi(close, rsiLen)
+[macdLine, macdSignalLine, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+float atr = ta.atr(atrLen)
+float atrPct = close > 0 ? atr / close * 100.0 : 0.0
+float volumeAverage = ta.sma(volume, volumeLen)
+bool liquidEnough = na(volume) or na(volumeAverage) or volume > volumeAverage * 0.80
+float previousHigh = ta.highest(high, breakoutLen)[1]
+float previousLow = ta.lowest(low, breakoutLen)[1]
+bool longBreakout = close > previousHigh
+bool shortBreakout = close < previousLow
+bool volatilityOk = atrPct > 0.15 and atrPct <= maxAtrPct
+bool standardChart = chart.is_standard
+bool sessionOk = not useSession or not na(time(timeframe.period, tradeSession))
+
+float longScore = 0.0
+longScore += emaFast > emaSlow ? 18.0 : 0.0
+longScore += close > emaFast ? 10.0 : 0.0
+longScore += htfClose > htfEma ? 16.0 : 0.0
+longScore += adx >= minAdx and plusDI > minusDI ? 14.0 : 0.0
+longScore += rsi >= 52 and rsi <= 72 ? 12.0 : 0.0
+longScore += macdHist > 0 and macdLine > macdSignalLine ? 12.0 : 0.0
+longScore += liquidEnough ? 8.0 : 0.0
+longScore += longBreakout ? 10.0 : 0.0
+
+float shortScore = 0.0
+shortScore += emaFast < emaSlow ? 18.0 : 0.0
+shortScore += close < emaFast ? 10.0 : 0.0
+shortScore += htfClose < htfEma ? 16.0 : 0.0
+shortScore += adx >= minAdx and minusDI > plusDI ? 14.0 : 0.0
+shortScore += rsi <= 48 and rsi >= 28 ? 12.0 : 0.0
+shortScore += macdHist < 0 and macdLine < macdSignalLine ? 12.0 : 0.0
+shortScore += liquidEnough ? 8.0 : 0.0
+shortScore += shortBreakout ? 10.0 : 0.0
+
+// Agent 3: Available company financials. Missing values never get fabricated.
+float epsTtm = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", ignore_invalid_symbol = true)
+float revenueTtm = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "TTM", ignore_invalid_symbol = true)
+float netIncomeTtm = request.financial(syminfo.tickerid, "NET_INCOME", "TTM", ignore_invalid_symbol = true)
+float currentRatio = request.financial(syminfo.tickerid, "CURRENT_RATIO", fiscalPeriod, ignore_invalid_symbol = true)
+float freeCashFlow = request.financial(syminfo.tickerid, "FREE_CASH_FLOW", "TTM", ignore_invalid_symbol = true)
+bool fundamentalAvailable = not na(epsTtm) or not na(revenueTtm) or not na(netIncomeTtm)
+float fundamentalScore = 50.0
+if fundamentalAvailable
+    fundamentalScore := 0.0
+    fundamentalScore += not na(epsTtm) and epsTtm > 0 ? 25.0 : 0.0
+    fundamentalScore += not na(netIncomeTtm) and netIncomeTtm > 0 ? 25.0 : 0.0
+    fundamentalScore += not na(freeCashFlow) and freeCashFlow > 0 ? 20.0 : 0.0
+    fundamentalScore += not na(currentRatio) and currentRatio >= 1.0 ? 20.0 : 0.0
+    fundamentalScore += not na(revenueTtm) and revenueTtm > 0 ? 10.0 : 0.0
+
+if useFundamentals and fundamentalAvailable
+    longScore := math.max(0.0, math.min(100.0, longScore + (fundamentalScore - 50.0) * 0.20))
+    shortScore := math.max(0.0, math.min(100.0, shortScore + (50.0 - fundamentalScore) * 0.20))
+
+// Agent 4: Adaptive risk, drawdown and loss-streak control
+var int lossStreak = 0
+var int pauseUntilBar = 0
+var int lastClosedBar = na
+bool tradeClosed = strategy.closedtrades > nz(strategy.closedtrades[1])
+if tradeClosed
+    int lastIndex = strategy.closedtrades - 1
+    float lastProfit = strategy.closedtrades.profit(lastIndex)
+    lossStreak := lastProfit < 0 ? lossStreak + 1 : 0
+    lastClosedBar := bar_index
+    if lossStreak >= maxLossStreak
+        pauseUntilBar := bar_index + streakPauseBars
+
+float streakMultiplier = lossStreak == 0 ? 1.0 : lossStreak == 1 ? 0.75 : lossStreak == 2 ? 0.50 : 0.25
+float adaptiveRiskPct = baseRiskPct * streakMultiplier
+
+bool newDay = ta.change(time("D")) != 0
+var float dayStartEquity = strategy.equity
+if newDay
+    dayStartEquity := strategy.equity
+float dailyReturnPct = dayStartEquity > 0 ? (strategy.equity - dayStartEquity) / dayStartEquity * 100.0 : 0.0
+bool dailyGuard = dailyReturnPct <= -maxDailyLoss
+
+var float equityPeak = strategy.equity
+equityPeak := math.max(equityPeak, strategy.equity)
+float currentDrawdownPct = equityPeak > 0 ? (equityPeak - strategy.equity) / equityPeak * 100.0 : 0.0
+var float observedMaxDrawdownPct = 0.0
+observedMaxDrawdownPct := math.max(observedMaxDrawdownPct, currentDrawdownPct)
+bool drawdownGuard = currentDrawdownPct >= maxDrawdown
+bool streakGuard = bar_index < pauseUntilBar
+bool cooldownOk = na(lastClosedBar) or bar_index - lastClosedBar >= cooldownBars
+bool guardsOk = not dailyGuard and not drawdownGuard and not streakGuard
+
+if dailyGuard or drawdownGuard
+    strategy.close_all(comment = dailyGuard ? "Günlük zarar sınırı" : "Maksimum drawdown", immediately = true)
+
+float riskCapital = math.max(strategy.equity, 0.0) * adaptiveRiskPct / 100.0
+float stopDistance = math.max(atr * stopAtr, syminfo.mintick * 2.0)
+float rawQty = stopDistance > 0 ? riskCapital / stopDistance : 0.0
+float maxPositionCapital = math.max(strategy.equity, 0.0) * maxPositionPct / 100.0
+float maxQtyByCapital = close > 0 ? maxPositionCapital / close : 0.0
+float cappedQty = math.min(rawQty, maxQtyByCapital)
+float orderQty = integerQty ? math.floor(cappedQty) : cappedQty
+bool quantityOk = orderQty > 0
+
+bool commonEntryFilter = barstate.isconfirmed and standardChart and sessionOk and volatilityOk and guardsOk and cooldownOk and quantityOk and strategy.position_size == 0
+bool longSignal = commonEntryFilter and allowLong and longTrend and trendRegime and longScore >= scoreThreshold
+bool shortSignal = commonEntryFilter and allowShort and shortTrend and trendRegime and shortScore >= scoreThreshold
+
+// Historical win probability uses beta-binomial smoothing. It is not a promise.
+float closedTrades = strategy.closedtrades
+float wins = strategy.wintrades
+float smoothedWinProbability = (wins + 1.0) / (closedTrades + 2.0) * 100.0
+string confidence = closedTrades >= 100 ? "Yüksek" : closedTrades >= minClosedTrades ? "Orta" : "Düşük"
+float grossLossAbs = math.abs(strategy.grossloss)
+float profitFactor = grossLossAbs > 0 ? strategy.grossprofit / grossLossAbs : na
+float averageWin = wins > 0 ? strategy.grossprofit / wins : 0.0
+float losingTrades = closedTrades - wins
+float averageLoss = losingTrades > 0 ? grossLossAbs / losingTrades : 0.0
+float expectancy = closedTrades > 0 ? (wins / closedTrades) * averageWin - (losingTrades / closedTrades) * averageLoss : 0.0
+bool historicalEdge = closedTrades >= minClosedTrades and not na(profitFactor) and profitFactor >= 1.15 and expectancy > 0
+
+// TradingView cannot read current KAP disclosures. These are technical pre-plan
+// levels only; the Chrome panel performs the final KAP, freshness and stress gates.
+float suggestedLimit = math.round(math.max(syminfo.mintick, close - atr * 0.12) / syminfo.mintick) * syminfo.mintick
+float suggestedRisk = math.max(atr * stopAtr, syminfo.mintick * 3.0)
+float suggestedStopTrigger = math.round(math.max(syminfo.mintick, suggestedLimit - suggestedRisk) / syminfo.mintick) * syminfo.mintick
+float suggestedStopLimit = math.round(math.max(syminfo.mintick, suggestedStopTrigger - math.max(atr * 0.12, syminfo.mintick * 3.0)) / syminfo.mintick) * syminfo.mintick
+float suggestedTargetOne = math.round((suggestedLimit + suggestedRisk * target1R) / syminfo.mintick) * syminfo.mintick
+float suggestedTargetTwo = math.round((suggestedLimit + suggestedRisk * target2R) / syminfo.mintick) * syminfo.mintick
+bool technicalPreCandidate = longSignal and historicalEdge and (not useFundamentals or not fundamentalAvailable or fundamentalScore >= 55)
+
+// Agent 5: Order creation, partial targets and custom trailing stop
+var float entryAtr = na
+var float highestSinceEntry = na
+var float lowestSinceEntry = na
+var float initialStop = na
+var float targetOne = na
+var float targetTwo = na
+var float runnerStop = na
+
+string longEntryMessage = '{"source":"FinPilot","mode":"paper","event":"LONG_ENTRY","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","score":' + str.tostring(longScore, "#.0") + ',"historicalWinProbability":' + str.tostring(smoothedWinProbability, "#.0") + ',"riskPct":' + str.tostring(adaptiveRiskPct, "#.00") + ',"qty":' + str.tostring(orderQty) + '}'
+string shortEntryMessage = '{"source":"FinPilot","mode":"paper","event":"SHORT_ENTRY","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","score":' + str.tostring(shortScore, "#.0") + ',"historicalWinProbability":' + str.tostring(smoothedWinProbability, "#.0") + ',"riskPct":' + str.tostring(adaptiveRiskPct, "#.00") + ',"qty":' + str.tostring(orderQty) + '}'
+
+if longSignal
+    entryAtr := atr
+    strategy.entry("Long", strategy.long, qty = orderQty, comment = "FinPilot Long", alert_message = longEntryMessage)
+    alert(longEntryMessage, alert.freq_once_per_bar_close)
+
+if shortSignal
+    entryAtr := atr
+    strategy.entry("Short", strategy.short, qty = orderQty, comment = "FinPilot Short", alert_message = shortEntryMessage)
+    alert(shortEntryMessage, alert.freq_once_per_bar_close)
+
+bool newLong = strategy.position_size > 0 and strategy.position_size[1] <= 0
+bool newShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
+bool becameFlat = strategy.position_size == 0 and strategy.position_size[1] != 0
+
+if newLong
+    entryAtr := nz(entryAtr, atr)
+    highestSinceEntry := high
+    initialStop := strategy.position_avg_price - entryAtr * stopAtr
+    targetOne := strategy.position_avg_price + (strategy.position_avg_price - initialStop) * target1R
+    targetTwo := strategy.position_avg_price + (strategy.position_avg_price - initialStop) * target2R
+    runnerStop := initialStop
+
+if newShort
+    entryAtr := nz(entryAtr, atr)
+    lowestSinceEntry := low
+    initialStop := strategy.position_avg_price + entryAtr * stopAtr
+    targetOne := strategy.position_avg_price - (initialStop - strategy.position_avg_price) * target1R
+    targetTwo := strategy.position_avg_price - (initialStop - strategy.position_avg_price) * target2R
+    runnerStop := initialStop
+
+if strategy.position_size > 0
+    highestSinceEntry := math.max(nz(highestSinceEntry, high), high)
+    bool trailActive = highestSinceEntry >= targetOne
+    float trailCandidate = highestSinceEntry - atr * trailAtr
+    runnerStop := trailActive ? math.max(nz(runnerStop, initialStop), trailCandidate) : initialStop
+    strategy.exit("L-TP1", "Long", stop = initialStop, limit = targetOne, qty_percent = 50, comment_profit = "Hedef 1", comment_loss = "Stop", alert_profit = '{"source":"FinPilot","event":"LONG_TP1"}', alert_loss = '{"source":"FinPilot","event":"LONG_STOP"}')
+    strategy.exit("L-TP2", "Long", stop = initialStop, limit = targetTwo, qty_percent = 30, comment_profit = "Hedef 2", comment_loss = "Stop", alert_profit = '{"source":"FinPilot","event":"LONG_TP2"}', alert_loss = '{"source":"FinPilot","event":"LONG_STOP"}')
+    strategy.exit("L-Runner", "Long", stop = runnerStop, qty_percent = 20, comment_loss = trailActive ? "Trailing Stop" : "Stop", alert_loss = '{"source":"FinPilot","event":"LONG_RUNNER_EXIT"}')
+
+if strategy.position_size < 0
+    lowestSinceEntry := math.min(nz(lowestSinceEntry, low), low)
+    bool trailActive = lowestSinceEntry <= targetOne
+    float trailCandidate = lowestSinceEntry + atr * trailAtr
+    runnerStop := trailActive ? math.min(nz(runnerStop, initialStop), trailCandidate) : initialStop
+    strategy.exit("S-TP1", "Short", stop = initialStop, limit = targetOne, qty_percent = 50, comment_profit = "Hedef 1", comment_loss = "Stop", alert_profit = '{"source":"FinPilot","event":"SHORT_TP1"}', alert_loss = '{"source":"FinPilot","event":"SHORT_STOP"}')
+    strategy.exit("S-TP2", "Short", stop = initialStop, limit = targetTwo, qty_percent = 30, comment_profit = "Hedef 2", comment_loss = "Stop", alert_profit = '{"source":"FinPilot","event":"SHORT_TP2"}', alert_loss = '{"source":"FinPilot","event":"SHORT_STOP"}')
+    strategy.exit("S-Runner", "Short", stop = runnerStop, qty_percent = 20, comment_loss = trailActive ? "Trailing Stop" : "Stop", alert_loss = '{"source":"FinPilot","event":"SHORT_RUNNER_EXIT"}')
+
+if becameFlat
+    entryAtr := na
+    highestSinceEntry := na
+    lowestSinceEntry := na
+    initialStop := na
+    targetOne := na
+    targetTwo := na
+    runnerStop := na
+
+// Visual outputs are exportable from TradingView's chart-data export.
+plot(emaFast, "FinPilot EMA Fast", color = color.new(color.teal, 0), linewidth = 1)
+plot(emaSlow, "FinPilot EMA Slow", color = color.new(color.orange, 0), linewidth = 2)
+plot(showLevels and strategy.position_size != 0 ? initialStop : na, "FinPilot Stop", color = color.new(color.red, 0), linewidth = 2, style = plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? targetOne : na, "FinPilot Target 1", color = color.new(color.lime, 10), linewidth = 1, style = plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? targetTwo : na, "FinPilot Target 2", color = color.new(color.green, 0), linewidth = 2, style = plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? runnerStop : na, "FinPilot Runner Stop", color = color.new(color.fuchsia, 0), linewidth = 1, style = plot.style_linebr)
+plot(longScore, "FinPilot Long Score", display = display.data_window)
+plot(shortScore, "FinPilot Short Score", display = display.data_window)
+plot(smoothedWinProbability, "FinPilot Historical Win Probability", display = display.data_window)
+plot(profitFactor, "FinPilot Profit Factor", display = display.data_window)
+plot(observedMaxDrawdownPct, "FinPilot Max Drawdown %", display = display.data_window)
+plot(fundamentalAvailable ? fundamentalScore : na, "FinPilot Fundamental Score", display = display.data_window)
+
+plotshape(technicalPreCandidate, title = "FinPilot YATIR Ön Adayı", text = "ÖN ADAY", style = shape.labelup, location = location.belowbar, color = color.new(color.lime, 0), textcolor = color.black, size = size.tiny)
+plotshape(shortSignal, title = "FinPilot Short Setup", text = "SAT", style = shape.labeldown, location = location.abovebar, color = color.new(color.red, 0), textcolor = color.white, size = size.tiny)
+
+color regimeColor = not showBackground ? na : drawdownGuard or dailyGuard ? color.new(color.red, 88) : trendRegime and longTrend ? color.new(color.green, 92) : trendRegime and shortTrend ? color.new(color.red, 93) : color.new(color.orange, 95)
+bgcolor(regimeColor, title = "FinPilot Piyasa Rejimi")
+
+// Agent dashboard
+var table dashboard = table.new(position.top_right, 2, 19, border_width = 1, border_color = color.new(color.gray, 70), bgcolor = color.new(color.black, 12))
+if barstate.islast and showDashboard
+    string decision = not standardChart or dailyGuard or drawdownGuard or streakGuard ? "YATIRMA" : technicalPreCandidate ? "ÖN ADAY · PANEL" : "YATIRMA"
+    color decisionColor = technicalPreCandidate ? color.lime : color.red
+    table.cell(dashboard, 0, 0, "FinPilot Agent", text_color = color.lime, bgcolor = color.new(color.green, 80), text_size = size.small)
+    table.cell(dashboard, 1, 0, "PAPER", text_color = color.orange, bgcolor = color.new(color.green, 80), text_size = size.small)
+    table.cell(dashboard, 0, 1, "Karar", text_color = color.silver)
+    table.cell(dashboard, 1, 1, decision, text_color = decisionColor)
+    table.cell(dashboard, 0, 2, "Long / Short puan", text_color = color.silver)
+    table.cell(dashboard, 1, 2, str.tostring(longScore, "#.0") + " / " + str.tostring(shortScore, "#.0"), text_color = color.white)
+    table.cell(dashboard, 0, 3, "Geçmiş kazanma", text_color = color.silver)
+    table.cell(dashboard, 1, 3, closedTrades >= minClosedTrades ? "%" + str.tostring(smoothedWinProbability, "#.0") : "Veri yetersiz", text_color = closedTrades >= minClosedTrades ? color.white : color.orange)
+    table.cell(dashboard, 0, 4, "Güven / örneklem", text_color = color.silver)
+    table.cell(dashboard, 1, 4, confidence + " / " + str.tostring(closedTrades, "#"), text_color = color.white)
+    table.cell(dashboard, 0, 5, "Kâr faktörü", text_color = color.silver)
+    table.cell(dashboard, 1, 5, na(profitFactor) ? "—" : str.tostring(profitFactor, "#.00"), text_color = na(profitFactor) or profitFactor < 1 ? color.red : color.lime)
+    table.cell(dashboard, 0, 6, "Beklenen değer", text_color = color.silver)
+    table.cell(dashboard, 1, 6, str.tostring(expectancy, "#.00"), text_color = expectancy >= 0 ? color.lime : color.red)
+    table.cell(dashboard, 0, 7, "Güncel / maks. DD", text_color = color.silver)
+    table.cell(dashboard, 1, 7, "%" + str.tostring(currentDrawdownPct, "#.1") + " / %" + str.tostring(observedMaxDrawdownPct, "#.1"), text_color = currentDrawdownPct >= maxDrawdown * 0.75 ? color.red : color.white)
+    table.cell(dashboard, 0, 8, "Finansal araştırma", text_color = color.silver)
+    table.cell(dashboard, 1, 8, fundamentalAvailable ? str.tostring(fundamentalScore, "#.0") + "/100" : "Veri mevcut değil", text_color = fundamentalAvailable ? (fundamentalScore >= 60 ? color.lime : color.orange) : color.silver)
+    table.cell(dashboard, 0, 9, "Risk / kayıp serisi", text_color = color.silver)
+    table.cell(dashboard, 1, 9, "%" + str.tostring(adaptiveRiskPct, "#.00") + " / " + str.tostring(lossStreak), text_color = lossStreak >= 2 ? color.orange : color.white)
+    table.cell(dashboard, 0, 10, "Önerilen miktar", text_color = color.silver)
+    table.cell(dashboard, 1, 10, str.tostring(orderQty, integerQty ? "#" : "#.######"), text_color = color.white)
+    table.cell(dashboard, 0, 11, "Volatilite / ADX", text_color = color.silver)
+    table.cell(dashboard, 1, 11, "%" + str.tostring(atrPct, "#.1") + " / " + str.tostring(adx, "#.1"), text_color = volatilityOk ? color.white : color.red)
+    table.cell(dashboard, 0, 12, "Rejim", text_color = color.silver)
+    table.cell(dashboard, 1, 12, trendRegime ? (longTrend ? "Yükseliş trendi" : shortTrend ? "Düşüş trendi" : "Karışık") : "Yatay / zayıf", text_color = trendRegime ? color.white : color.orange)
+    table.cell(dashboard, 0, 13, "Alış limiti", text_color = color.silver)
+    table.cell(dashboard, 1, 13, str.tostring(suggestedLimit, format.mintick), text_color = color.aqua)
+    table.cell(dashboard, 0, 14, "Stop tetik / limit", text_color = color.silver)
+    table.cell(dashboard, 1, 14, str.tostring(suggestedStopTrigger, format.mintick) + " / " + str.tostring(suggestedStopLimit, format.mintick), text_color = color.red)
+    table.cell(dashboard, 0, 15, "Hedef 1 / 2", text_color = color.silver)
+    table.cell(dashboard, 1, 15, str.tostring(suggestedTargetOne, format.mintick) + " / " + str.tostring(suggestedTargetTwo, format.mintick), text_color = color.lime)
+    table.cell(dashboard, 0, 16, "Geçmiş kapısı", text_color = color.silver)
+    table.cell(dashboard, 1, 16, historicalEdge ? "GEÇTİ" : "GEÇMEDİ", text_color = historicalEdge ? color.lime : color.red)
+    table.cell(dashboard, 0, 17, "Nihai karar", text_color = color.silver)
+    table.cell(dashboard, 1, 17, "Chrome panelinde", text_color = color.orange)
+    table.cell(dashboard, 0, 18, "Uyarı", text_color = color.silver)
+    table.cell(dashboard, 1, 18, "KAP yok · garanti yok", text_color = color.orange)

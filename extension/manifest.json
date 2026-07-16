@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "FinPilot TradingView Agent",
+  "version": "1.2.0",
+  "description": "BIST hisselerini üç vadede araştıran, YATIR/YATIRMA ve limit/stop-limit planı üreten fail-closed karar paneli.",
+  "permissions": ["storage", "tabs", "activeTab", "sidePanel", "alarms", "notifications"],
+  "host_permissions": ["https://*.tradingview.com/*", "https://www.isyatirim.com.tr/*", "https://www.borsaistanbul.com/*", "https://kap.org.tr/*", "https://www.kap.org.tr/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "FinPilot Agent panelini aç" },
+  "side_panel": { "default_path": "panel.html" },
+  "content_scripts": [
+    {
+      "matches": ["https://*.tradingview.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
