@@ -26,6 +26,7 @@
     minimumExpectancyR: 0.08,
     minimumModelProbability: 52,
     maximumBrierScore: 0.27,
+    maximumCalibrationError: 14,
     minimumDirectionProbability: 56,
     maximumDirectionDownProbability: 36,
     minimumStressProfitability: 55,
@@ -56,6 +57,21 @@
     { label: "Yönetim değişikliği", pattern: /(?:üst\s+)?yönetim.*?değişik/i },
   ]);
 
+  const KAP_EVENT_RULES = Object.freeze([
+    { id: "contract", label: "Sözleşme / sipariş", polarity: 2, pattern: /sözleşme|sipariş|ihale|iş\s+ilişkisi|anlaşma\s+imzalan/i },
+    { id: "investment", label: "Yatırım / kapasite", polarity: 2, pattern: /yatırım\s+kararı|kapasite\s+art|yeni\s+(?:tesis|fabrika|hat)|üretime\s+başla/i },
+    { id: "buyback", label: "Pay geri alımı", polarity: 1.5, pattern: /pay\s+geri\s+al|hisse\s+geri\s+al/i },
+    { id: "dividend", label: "Temettü", polarity: 1, pattern: /kar\s+payı|kâr\s+payı|temettü/i },
+    { id: "earningsPositive", label: "Olumlu finansal sonuç", polarity: 1.5, pattern: /net\s+(?:dönem\s+)?karı.*?(?:art|yüksel)|satış.*?(?:art|yüksel)|faaliyet\s+kar.*?(?:art|yüksel)/i },
+    { id: "guidanceCut", label: "Beklenti düşüşü", polarity: -2.5, pattern: /beklenti.*?(?:düşür|azalt)|öngörü.*?(?:düşür|azalt)|zarar\s+açıkla/i },
+    { id: "debtRating", label: "Borç / not riski", polarity: -3, blocking: true, pattern: /temerrüt|borç.*?(?:yapılandır|ödeneme)|kredi\s+not.*?(?:düşür|indir)/i },
+    { id: "legal", label: "Hukuki / düzenleyici risk", polarity: -3, blocking: true, pattern: /dava|soruşturma|inceleme|idari\s+para\s+cezas/i },
+    { id: "operations", label: "Faaliyet kesintisi", polarity: -4, blocking: true, pattern: /faaliyet.*?(?:durdur|ara\s+ver)|üretim.*?(?:durdur|ara\s+ver)/i },
+    { id: "capital", label: "Sermaye işlemi", polarity: -1.5, pattern: /bedelli\s+sermaye|nakit\s+sermaye\s+artır|sermaye\s+azalt/i },
+    { id: "insiderSale", label: "Ortak / yönetici satışı", polarity: -1.5, pattern: /ortak.*?pay\s+sat|yönetici.*?pay\s+sat|satışa\s+konu\s+edil/i },
+    { id: "governance", label: "Yönetim değişikliği", polarity: -0.5, pattern: /(?:üst\s+)?yönetim.*?değişik|genel\s+müdür.*?(?:ayrıl|istifa)/i },
+  ]);
+
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   const finite = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
@@ -68,6 +84,58 @@
     } else if (text.includes(",")) text = text.replace(",", ".");
     const parsed = Number(text);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function extractTryAmount(text) {
+    const match = String(text || "").match(/(?:^|\s)(\d[\d.,]*)(?:\s*)(milyar|milyon|bin)?(?:\s*)(?:TL|TRY|Türk\s+Lirası)\b/i);
+    if (!match) return null;
+    const localized = match[2] && /^\d{1,3}(?:\.\d{3})+$/.test(match[1]) ? match[1].replace(/\./g, "") : match[1];
+    const value = parseNumber(localized);
+    if (!Number.isFinite(value)) return null;
+    const multiplier = /milyar/i.test(match[2] || "") ? 1_000_000_000 : /milyon/i.test(match[2] || "") ? 1_000_000 : /bin/i.test(match[2] || "") ? 1_000 : 1;
+    return value * multiplier;
+  }
+
+  function classifyKapEvent(event, fundamental = null, now = new Date()) {
+    const text = String(event?.text || "");
+    const matches = KAP_EVENT_RULES.filter((rule) => rule.pattern.test(text));
+    const amountTry = extractTryAmount(text);
+    const marketCapTry = Number.isFinite(fundamental?.marketCapTryM) ? fundamental.marketCapTryM * 1_000_000 : null;
+    const amountToMarketCapPct = amountTry && marketCapTry > 0 ? amountTry / marketCapTry * 100 : null;
+    const materiality = Number.isFinite(amountToMarketCapPct)
+      ? amountToMarketCapPct >= 5 ? "YÜKSEK" : amountToMarketCapPct >= 1 ? "ORTA" : "DÜŞÜK"
+      : matches.some((rule) => rule.blocking) ? "YÜKSEK" : matches.length ? "BELİRSİZ" : "DÜŞÜK";
+    const materialityWeight = materiality === "YÜKSEK" ? 1.5 : materiality === "ORTA" ? 1 : materiality === "BELİRSİZ" ? 0.65 : 0.4;
+    const age = businessDaysAge(event?.date, now);
+    const recencyWeight = clamp(1 - age / 15, 0.30, 1);
+    const rawImpact = matches.reduce((sum, rule) => sum + rule.polarity, 0) * materialityWeight * recencyWeight;
+    return {
+      date: event?.date || null,
+      text: text.slice(0, 360),
+      categories: matches.map((rule) => ({ id: rule.id, label: rule.label, polarity: rule.polarity })),
+      direction: rawImpact > 0.35 ? "OLUMLU" : rawImpact < -0.35 ? "OLUMSUZ" : "NÖTR",
+      impact: clamp(rawImpact, -10, 10),
+      materiality,
+      amountTry,
+      amountToMarketCapPct,
+      blocking: matches.some((rule) => rule.blocking),
+    };
+  }
+
+  function kapEventIntelligence(events, fundamental = null, now = new Date()) {
+    const classified = (events || []).filter((event) => businessDaysAge(event.date, now) <= 30).map((event) => classifyKapEvent(event, fundamental, now));
+    const impactScore = clamp(classified.reduce((sum, event) => sum + event.impact, 0) * 10, -100, 100);
+    const sorted = [...classified].sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
+    return {
+      available: classified.length > 0,
+      impactScore,
+      direction: impactScore >= 15 ? "OLUMLU" : impactScore <= -15 ? "OLUMSUZ" : classified.some((event) => event.direction !== "NÖTR") ? "KARIŞIK" : "NÖTR",
+      positiveCount: classified.filter((event) => event.direction === "OLUMLU").length,
+      negativeCount: classified.filter((event) => event.direction === "OLUMSUZ").length,
+      materialCount: classified.filter((event) => event.materiality === "YÜKSEK" || event.materiality === "ORTA").length,
+      topEvents: sorted.slice(0, 5),
+      note: "Metin sınıflandırması finansal etkiyi kanıtlamaz; yalnız resmi bildirimi önceliklendirir.",
+    };
   }
 
   function parseDate(value) {
@@ -326,6 +394,7 @@
       });
     }
     const allSymbols = new Set([...summaries.keys(), ...ratios.keys()]);
+    const marketCaps = [...summaries.values()].map((item) => item.marketCapTryM).filter((value) => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
     const sectorValues = new Map();
     for (const symbol of allSymbols) {
       const sector = summaries.get(symbol)?.sector || "Diğer";
@@ -355,11 +424,37 @@
         else if (value <= peerMedian * 1.35) earned += weight * 0.65;
         else if (value <= peerMedian * 1.8) earned += weight * 0.3;
       }
-      const score = possible >= 25 ? clamp(earned / possible * 100, 0, 100) : 50;
+      const valuationScore = possible >= 25 ? clamp(earned / possible * 100, 0, 100) : 50;
+      const expectedFields = Object.keys(weights);
+      const presentFields = expectedFields.filter((key) => Number.isFinite(ratio[key]) && ratio[key] > 0);
+      const completenessPct = expectedFields.length ? presentFields.length / expectedFields.length * 100 : 0;
+      const marketCapRank = Number.isFinite(summary.marketCapTryM) && marketCaps.length > 1
+        ? marketCaps.filter((value) => value <= summary.marketCapTryM).length / marketCaps.length * 100
+        : 0;
+      const freeFloatScore = Number.isFinite(summary.freeFloatPct) ? clamp(summary.freeFloatPct / 35 * 100, 0, 100) : 0;
+      const liquidityScore = marketCapRank * 0.60 + freeFloatScore * 0.40;
+      const peerDepth = presentFields.length ? Math.min(...presentFields.map((key) => (peers[key] || []).length)) : 0;
+      const peerDepthScore = clamp(peerDepth / 8 * 100, 0, 100);
+      const healthScore = valuationScore * 0.62 + completenessPct * 0.13 + liquidityScore * 0.17 + peerDepthScore * 0.08;
+      const missingFields = expectedFields.filter((key) => !presentFields.includes(key));
       result.set(symbol, {
         available: Boolean(summaries.has(symbol) || ratios.has(symbol)),
-        score,
-        status: score >= 65 ? "Güçlü" : score >= 45 ? "Dengeli" : "Zayıf",
+        score: healthScore,
+        valuationScore,
+        healthScore,
+        status: healthScore >= 65 ? "Güçlü" : healthScore >= 45 ? "Dengeli" : "Zayıf",
+        healthGrade: healthScore >= 75 && completenessPct >= 75 ? "A" : healthScore >= 60 ? "B" : healthScore >= 45 ? "C" : "D",
+        fundamentalHealth: {
+          valuationScore,
+          completenessPct,
+          liquidityScore,
+          peerDepth,
+          peerDepthScore,
+          marketCapRank,
+          presentFields,
+          missingFields,
+          evidenceLimits: missingFields.length ? `Resmi tabloda eksik oranlar: ${missingFields.join(", ")}.` : "Kullanılan sektör oranları mevcut.",
+        },
         scoringModel: scoringProfile.label,
         scoringProfile: scoringProfile.id,
         scoringWeights: weights,
@@ -401,7 +496,7 @@
     return `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`;
   }
 
-  function parseKapDisclosuresHtml(html, symbol, now = new Date()) {
+  function parseKapDisclosuresHtml(html, symbol, now = new Date(), fundamental = null) {
     const events = [];
     const normalizedSymbol = String(symbol || "").toUpperCase();
     for (const rowMatch of String(html || "").matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
@@ -417,6 +512,7 @@
       .filter((event) => businessDaysAge(event.date, now) <= 7 && event.riskLabels.length)
       .flatMap((event) => event.riskLabels.map((label) => ({ label, date: event.date, text: event.text })))
       .filter((event, index, all) => all.findIndex((candidate) => candidate.label === event.label && candidate.date === event.date) === index);
+    const eventIntelligence = kapEventIntelligence(events, fundamental, now);
     return {
       available: events.length > 0,
       blocked: recentRisks.length > 0,
@@ -424,7 +520,8 @@
       lastDisclosureDate: events[0]?.date || null,
       recentEventCount: events.filter((event) => businessDaysAge(event.date, now) <= 7).length,
       recentRisks: recentRisks.slice(0, 5),
-      latestEvents: events.slice(0, 3).map((event) => ({ date: event.date, text: event.text })),
+      latestEvents: events.slice(0, 3).map((event) => ({ ...classifyKapEvent(event, fundamental, now), riskLabels: event.riskLabels })),
+      eventIntelligence,
     };
   }
 
@@ -479,22 +576,25 @@
     return { available: events.length > 0 && feedFresh, feedFresh, lastDisclosureDate, oldestDisclosureDate, coverageBusinessDays: oldestDisclosureDate ? businessDaysAge(oldestDisclosureDate, now) : 0, events, bySymbol };
   }
 
-  function kapRiskFromFeed(feed, symbol, now = new Date()) {
+  function kapRiskFromFeed(feed, symbol, now = new Date(), fundamental = null) {
     if (!feed?.available) return { available: false, blocked: true, status: "KAP güncel akışı doğrulanamadı", lastDisclosureDate: feed?.lastDisclosureDate || null, searchUrl: KAP_DISCLOSURE_SEARCH };
     const events = feed.bySymbol?.get(symbol) || [];
     const recentEvents = events.filter((event) => businessDaysAge(event.date, now) <= 7);
+    const eventIntelligence = kapEventIntelligence(events, fundamental, now);
     const recentRisks = recentEvents.flatMap((event) => event.riskLabels.map((label) => ({ label, date: event.date, text: event.text })))
       .filter((event, index, all) => all.findIndex((candidate) => candidate.label === event.label && candidate.date === event.date) === index);
+    const severeEvent = eventIntelligence.topEvents.find((event) => event.blocking && businessDaysAge(event.date, now) <= 7);
     return {
       available: true,
-      blocked: recentRisks.length > 0,
-      status: recentRisks.length ? "İnceleme gerekli" : "Güncel KAP akışında yakın risk yok",
+      blocked: recentRisks.length > 0 || Boolean(severeEvent),
+      status: recentRisks.length || severeEvent ? "İnceleme gerekli" : "Güncel KAP akışında yakın risk yok",
       coverage: "public-feed",
       lastDisclosureDate: events[0]?.date || feed.lastDisclosureDate,
       feedLastDisclosureDate: feed.lastDisclosureDate,
       recentEventCount: recentEvents.length,
       recentRisks: recentRisks.slice(0, 5),
-      latestEvents: events.slice(0, 3).map((event) => ({ date: event.date, text: event.text })),
+      latestEvents: events.slice(0, 3).map((event) => ({ ...classifyKapEvent(event, fundamental, now), riskLabels: event.riskLabels })),
+      eventIntelligence,
       searchUrl: `${KAP_DISCLOSURE_SEARCH}?stockCode=${encodeURIComponent(symbol)}`,
     };
   }
@@ -544,13 +644,13 @@
     if (!companyResponse.ok) throw new Error(`${symbol}: KAP şirket sayfası alınamadı (${companyResponse.status})`);
     const companyHtml = await companyResponse.text();
     const memberId = parseKapMemberId(companyHtml);
-    let result = parseKapDisclosuresHtml(companyHtml, symbol, options.now || new Date());
+    let result = parseKapDisclosuresHtml(companyHtml, symbol, options.now || new Date(), options.fundamental || null);
     let searchUrl = company.url;
     if (memberId) {
       searchUrl = `https://kap.org.tr/tr/bildirim-sorgu-sonuc?member=${encodeURIComponent(memberId)}`;
       const disclosureResponse = await fetcher(searchUrl, { cache: "no-store", headers: { Accept: "text/html" } });
       if (!disclosureResponse.ok) throw new Error(`${symbol}: KAP bildirimleri alınamadı (${disclosureResponse.status})`);
-      result = parseKapDisclosuresHtml(await disclosureResponse.text(), symbol, options.now || new Date());
+      result = parseKapDisclosuresHtml(await disclosureResponse.text(), symbol, options.now || new Date(), options.fundamental || null);
     }
     return { ...result, companyUrl: company.url, searchUrl, memberResolved: Boolean(memberId) };
   }
@@ -618,21 +718,27 @@
     const fiveDay = analysis.forecasts?.find((forecast) => forecast.horizon === 5);
     const profitFactorScore = Number.isFinite(backtest.profitFactor) ? clamp(backtest.profitFactor * 38, 0, 100) : 100;
     const expectancyScore = clamp(50 + backtest.expectancyR * 35, 0, 100);
-    const modelScore = analysis.model.available ? analysis.model.probabilityUp : 50;
+    const modelScore = analysis.model.available ? finite(analysis.model.calibratedProbabilityUp, analysis.model.probabilityUp) : 50;
     const directionScore = fiveDay?.available ? fiveDay.probabilityUp : 0;
     const fundamentalScore = fundamental?.available ? fundamental.score : 50;
     const watchEdge = backtest.totalTrades >= PROFILE.minimumTrades && backtest.profitFactor >= 1.15 && backtest.expectancyR > 0;
     const backtestEdge = watchEdge && backtest.profitFactor >= PROFILE.minimumProfitFactor && backtest.expectancyR >= PROFILE.minimumExpectancyR;
-    const modelEdge = analysis.model.available && analysis.model.probabilityUp >= PROFILE.minimumModelProbability && analysis.model.outOfSampleAccuracy >= 48 && analysis.model.brierScore <= PROFILE.maximumBrierScore;
-    const fundamentalEdge = Boolean(fundamental?.available) && fundamental.score >= 38;
+    const modelEdge = analysis.model.available && finite(analysis.model.calibratedProbabilityUp, analysis.model.probabilityUp) >= PROFILE.minimumModelProbability && analysis.model.outOfSampleAccuracy >= 48 && analysis.model.brierScore <= PROFILE.maximumBrierScore && finite(analysis.model.expectedCalibrationError, 100) <= PROFILE.maximumCalibrationError;
+    const fundamentalEdge = Boolean(fundamental?.available) && fundamental.score >= 42 && finite(fundamental?.fundamentalHealth?.completenessPct, 100) >= 50;
     const directionEdge = Boolean(fiveDay?.available) && fiveDay.probabilityUp >= PROFILE.minimumDirectionProbability && fiveDay.probabilityDown <= PROFILE.maximumDirectionDownProbability && fiveDay.expectedMedianPct > 0;
     const recentEdge = backtest.recentTrades >= 6 && backtest.recentExpectancyR > 0 && backtest.recentProfitFactor >= 1;
     const stressEdge = Boolean(backtest.stress?.available) && backtest.stress.profitablePct >= PROFILE.minimumStressProfitability;
-    const edge = backtestEdge && modelEdge && fundamentalEdge && directionEdge && recentEdge && stressEdge;
+    const validationEdge = Boolean(analysis.validation?.passed);
+    const edge = backtestEdge && modelEdge && fundamentalEdge && directionEdge && recentEdge && stressEdge && validationEdge;
     let score = analysis.setupScore * 0.24 + analysis.estimatedProbability * 0.16 + profitFactorScore * 0.13 + expectancyScore * 0.09 + modelScore * 0.11 + fundamentalScore * 0.11 + directionScore * 0.16;
     if (analysis.decision === "LONG ADAYI") score += 10;
     else if (!watchEdge) score -= 18;
-    return { score: clamp(score, 0, 100), edge, watchEdge, backtestEdge, modelEdge, fundamentalEdge, directionEdge, recentEdge, stressEdge };
+    score += analysis.validation?.evidenceGrade === "A" ? 6 : analysis.validation?.evidenceGrade === "B" ? 3 : analysis.validation?.evidenceGrade === "D" ? -10 : -4;
+    return { score: clamp(score, 0, 100), edge, watchEdge, backtestEdge, modelEdge, fundamentalEdge, directionEdge, recentEdge, stressEdge, validationEdge };
+  }
+
+  function returnSignature(rows, size = 36) {
+    return rows.slice(-Math.max(2, size + 1)).map((row, index, values) => index ? Math.log(row.close / values[index - 1].close) : null).filter(Number.isFinite).slice(-size).map((value) => Number(value.toFixed(6)));
   }
 
   function buildRecommendation(symbol, rows, analysis, fundamental, options = {}) {
@@ -663,12 +769,17 @@
       model: {
         passed: evaluation.modelEdge,
         label: "ML",
-        message: analysis.model.available ? `Yükseliş %${analysis.model.probabilityUp.toFixed(1)}/%${PROFILE.minimumModelProbability} · doğruluk %${analysis.model.outOfSampleAccuracy.toFixed(1)}/%48 · Brier ${analysis.model.brierScore.toFixed(3)}/${PROFILE.maximumBrierScore.toFixed(2)} azami.` : "ML modeli için yeterli kronolojik örnek yok.",
+        message: analysis.model.available ? `Kalibre yükseliş %${finite(analysis.model.calibratedProbabilityUp, analysis.model.probabilityUp).toFixed(1)}/%${PROFILE.minimumModelProbability} · doğruluk %${analysis.model.outOfSampleAccuracy.toFixed(1)}/%48 · Brier ${analysis.model.brierScore.toFixed(3)}/${PROFILE.maximumBrierScore.toFixed(2)} · kalibrasyon hatası %${finite(analysis.model.expectedCalibrationError, 100).toFixed(1)}/%${PROFILE.maximumCalibrationError} azami.` : "ML modeli için yeterli kronolojik örnek yok.",
+      },
+      validation: {
+        passed: evaluation.validationEdge,
+        label: "Dönem dışı test",
+        message: analysis.validation ? `Kanıt ${analysis.validation.evidenceGrade}/B gerekli · ${analysis.validation.oos.trades} dönem dışı işlem · tutarlılık %${analysis.validation.stabilityPct.toFixed(0)} · aşırı uyum ${analysis.validation.overfitRisk}.` : "Walk-forward doğrulaması üretilemedi.",
       },
       fundamental: {
         passed: evaluation.fundamentalEdge,
         label: "Temel",
-        message: fundamental?.available ? `${fundamental.scoringModel || "Sektör değerlemesi"}: ${fundamental.score.toFixed(0)}/38 gerekli.` : "Temel değerleme doğrulanamadı; fail-closed kapı kapalı.",
+        message: fundamental?.available ? `${fundamental.scoringModel || "Sektör değerlemesi"}: sağlık ${fundamental.score.toFixed(0)}/42 · değerleme ${finite(fundamental.valuationScore, fundamental.score).toFixed(0)} · resmi alan kapsamı %${finite(fundamental.fundamentalHealth?.completenessPct, 0).toFixed(0)}/%50.` : "Temel değerleme doğrulanamadı; fail-closed kapı kapalı.",
       },
       direction: {
         passed: evaluation.directionEdge,
@@ -711,6 +822,12 @@
       setupScore: analysis.setupScore,
       trendDirection: latest.trend,
       price: latest.close,
+      currentBar: {
+        open: rows[rows.length - 1].open,
+        high: rows[rows.length - 1].high,
+        low: rows[rows.length - 1].low,
+        close: rows[rows.length - 1].close,
+      },
       priceDecimals: 2,
       dataDate,
       dataAgeBusinessDays,
@@ -728,7 +845,15 @@
       recentProfitFactor: analysis.backtest.recentProfitFactor,
       stress: analysis.backtest.stress,
       modelProbabilityUp: analysis.model.available ? analysis.model.probabilityUp : null,
+      calibratedProbabilityUp: analysis.model.available ? analysis.model.calibratedProbabilityUp : null,
+      calibrationError: analysis.model.available ? analysis.model.expectedCalibrationError : null,
       modelAccuracy: analysis.model.available ? analysis.model.outOfSampleAccuracy : null,
+      validation: analysis.validation || null,
+      regime: analysis.regime || null,
+      challenger: analysis.challenger || null,
+      evidenceGrade: analysis.validation?.evidenceGrade || "D",
+      decisionDelta: analysis.validation?.decisionDelta || null,
+      returnSignature: returnSignature(rows),
       fundamental: fundamental?.available ? fundamental : { available: false, score: 50, status: "Veri yok" },
       kap: { available: false, blocked: true, status: "KAP araştırması bekleniyor" },
       forecasts,
@@ -745,6 +870,8 @@
         threshold: analysis.strategy?.threshold,
         score: analysis.strategy?.score,
         selectionScore: analysis.selectionScore,
+        v3SelectionScore: analysis.v3SelectionScore,
+        regimeCompatibility: analysis.regimeCompatibility,
         comparisons: analysis.strategyComparisons || [],
       },
       orderPlan,
@@ -762,6 +889,7 @@
         setup: analysis.decision === "LONG ADAYI",
         backtest: evaluation.backtestEdge,
         model: evaluation.modelEdge,
+        validation: evaluation.validationEdge,
         fundamental: evaluation.fundamentalEdge,
         direction: evaluation.directionEdge,
         recentRegime: evaluation.recentEdge,
@@ -774,12 +902,14 @@
       gateDiagnostics,
       reasons: [
         `Seçilen yaklaşım: ${analysis.strategy?.label || "Trend devamı"}; ${analysis.strategyComparisons?.length || 1} strateji aynı veri üzerinde ayrı backtest edildi.`,
+        analysis.validation?.decisionDelta || "Rejim ve walk-forward strateji seçimi tamamlanamadı.",
+        analysis.validation ? `Kanıt notu ${analysis.validation.evidenceGrade}; ${analysis.validation.oos.trades} dönem dışı işlem, dilim tutarlılığı %${analysis.validation.stabilityPct.toFixed(1)}, aşırı uyum riski ${analysis.validation.overfitRisk}.` : "Dönem dışı doğrulama yok.",
         trendAgent?.detail || "Trend verisi hesaplandı.",
         momentumAgent?.detail || "Momentum verisi hesaplandı.",
         evaluation.watchEdge ? "Masraflar sonrası geçmiş test pozitif beklenti gösteriyor." : "Masraflar sonrası geçmiş test yeterli avantaj göstermiyor.",
-        analysis.model.available ? `Yerel ML yükseliş olasılığı %${analysis.model.probabilityUp.toFixed(1)}; kronolojik test doğruluğu %${analysis.model.outOfSampleAccuracy.toFixed(1)}.` : "Yerel ML için veri yetersiz.",
+        analysis.model.available ? `Yerel ML ham yükseliş %${analysis.model.probabilityUp.toFixed(1)}, kalibre %${finite(analysis.model.calibratedProbabilityUp, analysis.model.probabilityUp).toFixed(1)}; kronolojik test doğruluğu %${analysis.model.outOfSampleAccuracy.toFixed(1)}.` : "Yerel ML için veri yetersiz.",
         fiveDay?.available ? `5 işlem günü yön modeli: yükseliş %${fiveDay.probabilityUp.toFixed(1)}, düşüş %${fiveDay.probabilityDown.toFixed(1)}, yatay %${fiveDay.probabilityFlat.toFixed(1)}; beklenen orta hareket %${fiveDay.expectedMedianPct.toFixed(2)}.` : "5 günlük yön modeli için yeterli benzer dönem bulunamadı.",
-        fundamental?.available ? `${fundamental.sector || "Sektör"}: ${fundamental.scoringModel || "sektör değerlemesi"} puanı ${fundamental.score.toFixed(0)}/100 (${fundamental.status}); F/K ${Number.isFinite(fundamental.pe) ? fundamental.pe.toFixed(1) : "—"}, PD/DD ${Number.isFinite(fundamental.priceToBook) ? fundamental.priceToBook.toFixed(1) : "—"}.` : "Temel değerleme tablosu alınamadı; sonuç yalnızca teknik, backtest ve ML kontrollerine dayanıyor.",
+        fundamental?.available ? `${fundamental.sector || "Sektör"}: temel sağlık ${fundamental.score.toFixed(0)}/100 (${fundamental.healthGrade || "—"}); değerleme ${finite(fundamental.valuationScore, fundamental.score).toFixed(0)}, likidite ${finite(fundamental.fundamentalHealth?.liquidityScore).toFixed(0)}, resmi alan kapsamı %${finite(fundamental.fundamentalHealth?.completenessPct).toFixed(0)}; F/K ${Number.isFinite(fundamental.pe) ? fundamental.pe.toFixed(1) : "—"}, PD/DD ${Number.isFinite(fundamental.priceToBook) ? fundamental.priceToBook.toFixed(1) : "—"}.` : "Temel değerleme tablosu alınamadı; sonuç yalnızca teknik, backtest ve ML kontrollerine dayanıyor.",
         analysis.backtest.stress?.available ? `Monte Carlo stres testi pozitif kapanış oranı %${analysis.backtest.stress.profitablePct.toFixed(1)}; kötü %10 senaryo ${analysis.backtest.stress.p10NetR.toFixed(2)}R.` : "Stres testi için işlem sayısı yetersiz.",
         orderPlan.valid ? `${orderPlan.label} seçildi; 3 plandan ${orderPlan.validPlanCount} tanesi sınırları geçti ve hedef 2 risk/getiri ${orderPlan.rewardRisk2.toFixed(2)}R.` : `Üç emir planı da geçemedi: ${(orderPlan.failureReasons || []).join(" ")}`,
         dataFresh ? `Fiyat verisi ${dataAgeBusinessDays} iş günü yaşında; tazelik kapısı açık.` : `Fiyat verisi ${dataAgeBusinessDays} iş günü yaşında; tazelik kapısı kapalı.`,
@@ -802,16 +932,17 @@
     if (!kapResult.available) reasons.push("KAP bildirimleri doğrulanamadığı için güvenlik gereği YATIRMA.");
     else if (kapResult.blocked) reasons.push(`Son KAP bildirimlerinde inceleme gerektiren işaret bulundu: ${kapResult.recentRisks?.map((risk) => `${risk.label} (${risk.date})`).join(", ") || kapResult.status}.`);
     else reasons.push(`KAP kontrolü tamamlandı; son 7 iş gününde tanımlı risk işareti bulunmadı (${kapResult.recentEventCount || 0} bildirim incelendi).`);
+    if (kapResult.eventIntelligence?.available) reasons.push(`KAP olay haritası ${kapResult.eventIntelligence.direction}; etki puanı ${kapResult.eventIntelligence.impactScore.toFixed(0)}, önemli olay ${kapResult.eventIntelligence.materialCount}. Bu sınıflandırma bildirimin finansal etkisini garanti etmez.`);
     if (!marketGateOpen) reasons.push("Piyasa genişliği risk kapısı kapalı olduğu için YATIRMA.");
     if (!dataSufficient) reasons.push("Tarama kapsamı yetersiz olduğu için YATIRMA.");
     const gates = { ...item.gates, kap: kapGate, market: marketGate };
-    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
+    const gateLabels = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: "Piyasa" };
     const gateDiagnostics = {
       ...(item.gateDiagnostics || {}),
       kap: {
         passed: kapGate,
         label: "KAP",
-        message: !kapResult.available ? "KAP güncel akışı doğrulanamadı." : kapResult.blocked ? `KAP risk işareti: ${kapResult.recentRisks?.map((risk) => risk.label).join(", ") || kapResult.status}.` : `KAP açık: son 7 iş gününde tanımlı risk yok; ${kapResult.recentEventCount || 0} bildirim incelendi.`,
+        message: !kapResult.available ? "KAP güncel akışı doğrulanamadı." : kapResult.blocked ? `KAP risk işareti: ${kapResult.recentRisks?.map((risk) => risk.label).join(", ") || kapResult.status}.` : `KAP açık: son 7 iş gününde tanımlı risk yok; ${kapResult.recentEventCount || 0} bildirim incelendi · olay yönü ${kapResult.eventIntelligence?.direction || "NÖTR"}.`,
       },
       market: {
         passed: marketGate,
@@ -893,7 +1024,7 @@
         ].filter((item, index, all) => all.findIndex((candidate) => candidate.symbol === item.symbol) === index).slice(0, PROFILE.deepResearchLimit);
       try {
         const feed = options.kapFeed || await fetchKapDisclosureFeed(fetcher, now);
-        for (const item of prioritized) kapResults.set(item.symbol, kapRiskFromFeed(feed, item.symbol, now));
+        for (const item of prioritized) kapResults.set(item.symbol, kapRiskFromFeed(feed, item.symbol, now, item.fundamental));
       } catch (feedError) {
         kapWarnings.push({ symbol: "KAP AKIŞ", message: feedError instanceof Error ? feedError.message : String(feedError) });
         try {
@@ -903,7 +1034,7 @@
           while (cursor < prioritized.length) {
             const item = prioritized[cursor];
             cursor += 1;
-            try { kapResults.set(item.symbol, await fetchKapRisk(item.symbol, directory, { fetcher, now })); }
+            try { kapResults.set(item.symbol, await fetchKapRisk(item.symbol, directory, { fetcher, now, fundamental: item.fundamental })); }
             catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               kapResults.set(item.symbol, { available: false, blocked: true, status: "KAP doğrulanamadı", error: message });
@@ -941,7 +1072,7 @@
       marketDecision: candidates.length ? `YATIR · ${candidates.length} hisse tüm kapıları geçti` : !dataSufficient ? "YATIRMA · tarama verisi yetersiz" : marketGateOpen ? "YATIRMA · tüm koşulları geçen hisse yok" : "YATIRMA · piyasa filtresi zayıf",
       marketRegime: { gateOpen: marketGateOpen, dataSufficient, coveragePct, breadthPct: marketBreadthPct, positiveTrendCount, sampleSize: scanned.results.length },
       recommendations: recommendations.slice(0, 30),
-      snapshot: recommendations.map((item) => ({ market: item.market, symbol: item.symbol, displaySymbol: item.displaySymbol, price: item.price, dataDate: item.dataDate, eligible: item.eligible })),
+      snapshot: recommendations.map((item) => ({ market: item.market, symbol: item.symbol, displaySymbol: item.displaySymbol, price: item.price, dataDate: item.dataDate, eligible: item.eligible, currentBar: item.currentBar, returnSignature: item.returnSignature, sector: item.fundamental?.sector || "Diğer", strategy: item.strategy, orderPlan: item.orderPlan })),
       errors: [...warnings, ...scanned.errors].slice(0, 8),
       research: {
         deepResearchLimit: PROFILE.deepResearchLimit,
@@ -979,6 +1110,9 @@
     parseKapDisclosuresHtml,
     parseKapDisclosureFeed,
     kapRiskFromFeed,
+    classifyKapEvent,
+    kapEventIntelligence,
+    extractTryAmount,
     tickSizeForPrice,
     roundToTick,
     businessDaysAge,

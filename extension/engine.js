@@ -25,6 +25,21 @@
     return sorted[lower] * (1 - weight) + sorted[upper] * weight;
   }
 
+  function standardDeviation(values) {
+    const clean = values.filter(Number.isFinite);
+    if (clean.length < 2) return 0;
+    const average = mean(clean);
+    return Math.sqrt(clean.reduce((sum, value) => sum + (value - average) ** 2, 0) / (clean.length - 1));
+  }
+
+  function normalCdf(value) {
+    const sign = value < 0 ? -1 : 1;
+    const x = Math.abs(value) / Math.sqrt(2);
+    const t = 1 / (1 + 0.3275911 * x);
+    const erf = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return 0.5 * (1 + sign * erf);
+  }
+
   function splitCsvLine(line, delimiter) {
     const out = [];
     let cell = "";
@@ -343,12 +358,27 @@
     const predict = (x) => sigmoid(bias + normalize(x).reduce((sum, v, d) => sum + v * weights[d], 0));
     let correct = 0;
     let brier = 0;
+    const testPredictions = [];
     for (const sample of test) {
       const probability = predict(sample.x);
       if ((probability >= 0.5 ? 1 : 0) === sample.y) correct += 1;
       brier += (probability - sample.y) ** 2;
+      testPredictions.push({ probability, outcome: sample.y, index: sample.index });
     }
     const latestProbability = predict(features[features.length - 1].vector) * 100;
+    const reliability = Array.from({ length: 5 }, (_, index) => {
+      const low = index / 5;
+      const high = (index + 1) / 5;
+      const values = testPredictions.filter((item) => item.probability >= low && (index === 4 ? item.probability <= high : item.probability < high));
+      const predicted = values.length ? mean(values.map((item) => item.probability)) : (low + high) / 2;
+      const observed = values.length ? (values.reduce((sum, item) => sum + item.outcome, 0) + 1) / (values.length + 2) : predicted;
+      return { low: low * 100, high: high * 100, count: values.length, predicted: predicted * 100, observed: observed * 100 };
+    });
+    const reliabilityCount = Math.max(1, testPredictions.length);
+    const calibrationError = reliability.reduce((sum, bin) => sum + Math.abs(bin.predicted - bin.observed) * bin.count / reliabilityCount, 0);
+    const latestBin = reliability[Math.min(4, Math.floor(latestProbability / 20))];
+    const calibrationWeight = clamp(latestBin.count / 24, 0, 0.75);
+    const calibratedProbabilityUp = latestProbability * (1 - calibrationWeight) + latestBin.observed * calibrationWeight;
     return {
       available: true,
       trainSamples: train.length,
@@ -357,6 +387,10 @@
       brierScore: test.length ? brier / test.length : 1,
       probabilityUp: latestProbability,
       probabilityDown: 100 - latestProbability,
+      calibratedProbabilityUp,
+      calibratedProbabilityDown: 100 - calibratedProbabilityUp,
+      expectedCalibrationError: calibrationError,
+      reliability,
       quality: test.length >= 100 && brier / test.length < 0.24 ? "Orta-yüksek" : test.length >= 40 ? "Orta" : "Düşük",
       weights,
       bias,
@@ -507,6 +541,200 @@
     return { low: clamp(center - margin, 0, 1), high: clamp(center + margin, 0, 1) };
   }
 
+  function classifyRegime(features) {
+    const latest = features[features.length - 1] || {};
+    const recent = features.slice(-80);
+    const volatilityReference = quantile(recent.map((item) => finite(item.atrPct)).filter((value) => value > 0), 0.80);
+    const highVolatility = finite(latest.atrPct) >= Math.max(4.5, volatilityReference * 1.15);
+    const pumpRisk = finite(latest.volumeRatio) >= 3.5 && Math.abs(finite(latest.changeAtr)) >= 1.8;
+    let id = "sideways";
+    if (pumpRisk) id = "liquidityPump";
+    else if (highVolatility) id = "highVolatility";
+    else if (finite(latest.trend) < 0 && finite(latest.trendStrengthAtr) <= -0.65 && finite(latest.rsi, 50) < 46) id = "riskOff";
+    else if (finite(latest.trend) > 0 && finite(latest.trendStrengthAtr) >= 0.90 && finite(latest.rsi, 50) >= 50) id = "strongTrend";
+    else if (finite(latest.trend) > 0) id = "weakTrend";
+    else if (Math.abs(finite(latest.trendStrengthAtr)) <= 0.75) id = "sideways";
+    else id = "riskOff";
+    const labels = {
+      strongTrend: "Güçlü yükseliş trendi",
+      weakTrend: "Zayıf yükseliş trendi",
+      sideways: "Yatay / kararsız",
+      highVolatility: "Yüksek oynaklık",
+      riskOff: "Riskten kaçış",
+      liquidityPump: "Likidite / ani hareket riski",
+    };
+    return {
+      id,
+      label: labels[id],
+      highVolatility,
+      pumpRisk,
+      atrPct: finite(latest.atrPct),
+      trendStrengthAtr: finite(latest.trendStrengthAtr),
+      rsi: finite(latest.rsi, 50),
+      volumeRatio: finite(latest.volumeRatio, 1),
+    };
+  }
+
+  function regimeCompatibility(mode, regimeId) {
+    const matrix = {
+      trend: { strongTrend: 1, weakTrend: 0.78, sideways: 0.30, highVolatility: 0.38, riskOff: 0.08, liquidityPump: 0.12 },
+      pullback: { strongTrend: 0.82, weakTrend: 1, sideways: 0.42, highVolatility: 0.30, riskOff: 0.08, liquidityPump: 0.10 },
+      breakout: { strongTrend: 0.96, weakTrend: 0.70, sideways: 0.28, highVolatility: 0.48, riskOff: 0.08, liquidityPump: 0.10 },
+      meanReversion: { strongTrend: 0.12, weakTrend: 0.35, sideways: 1, highVolatility: 0.18, riskOff: 0.12, liquidityPump: 0.08 },
+    };
+    return finite(matrix[mode]?.[regimeId], 0.15);
+  }
+
+  function tradeSummary(trades) {
+    const safe = Array.isArray(trades) ? trades : [];
+    const values = safe.map((trade) => finite(trade.resultR)).filter(Number.isFinite);
+    const wins = values.filter((value) => value > 0).length;
+    const grossWin = values.filter((value) => value > 0).reduce((sum, value) => sum + value, 0);
+    const grossLoss = Math.abs(values.filter((value) => value <= 0).reduce((sum, value) => sum + value, 0));
+    return {
+      trades: values.length,
+      wins,
+      winRate: values.length ? wins / values.length * 100 : 0,
+      expectancyR: mean(values),
+      netR: values.reduce((sum, value) => sum + value, 0),
+      profitFactor: grossLoss ? grossWin / grossLoss : grossWin ? Infinity : 0,
+    };
+  }
+
+  function combinations(values, size, start = 0, prefix = [], output = []) {
+    if (prefix.length === size) { output.push(prefix); return output; }
+    for (let index = start; index <= values.length - (size - prefix.length); index += 1) combinations(values, size, index + 1, [...prefix, values[index]], output);
+    return output;
+  }
+
+  function probabilityOfBacktestOverfit(perStrategy, foldCount) {
+    if (foldCount < 4 || Object.keys(perStrategy).length < 2) return { available: false, value: null, trials: 0 };
+    const foldIndexes = Array.from({ length: foldCount }, (_, index) => index);
+    const splits = combinations(foldIndexes, Math.floor(foldCount / 2));
+    let failures = 0;
+    let trials = 0;
+    for (const training of splits) {
+      const testing = foldIndexes.filter((index) => !training.includes(index));
+      const scores = Object.entries(perStrategy).map(([id, metrics]) => ({
+        id,
+        train: mean(training.map((index) => finite(metrics.folds[index]?.expectancyR))),
+        test: mean(testing.map((index) => finite(metrics.folds[index]?.expectancyR))),
+      }));
+      if (!scores.some((item) => Number.isFinite(item.train) && Number.isFinite(item.test))) continue;
+      const selected = [...scores].sort((a, b) => b.train - a.train)[0];
+      const testRanking = [...scores].sort((a, b) => b.test - a.test);
+      const rank = testRanking.findIndex((item) => item.id === selected.id);
+      if (rank >= Math.ceil(testRanking.length / 2)) failures += 1;
+      trials += 1;
+    }
+    return { available: trials > 0, value: trials ? failures / trials : null, trials };
+  }
+
+  function deflatedSharpeApproximation(trades, strategyTrials) {
+    const values = (trades || []).map((trade) => finite(trade.resultR)).filter(Number.isFinite);
+    if (values.length < 8) return { available: false, probability: null, sharpe: null, expectedMaximum: null, reason: "En az 8 dönem dışı işlem gerekli." };
+    const average = mean(values);
+    const deviation = standardDeviation(values);
+    if (!deviation) return { available: false, probability: null, sharpe: null, expectedMaximum: null, reason: "Getiri dağılımı hesaplanamadı." };
+    const sharpe = average / deviation * Math.sqrt(values.length);
+    const centered = values.map((value) => (value - average) / deviation);
+    const skew = mean(centered.map((value) => value ** 3));
+    const kurtosis = mean(centered.map((value) => value ** 4));
+    const trials = Math.max(2, Math.floor(finite(strategyTrials, 4)));
+    const expectedMaximum = Math.sqrt(2 * Math.log(trials)) - (Math.log(Math.log(trials)) + Math.log(4 * Math.PI)) / (2 * Math.sqrt(2 * Math.log(trials)));
+    const denominator = Math.sqrt(Math.max(0.05, 1 - skew * sharpe + ((kurtosis - 1) / 4) * sharpe * sharpe));
+    const probability = normalCdf((sharpe - expectedMaximum) * Math.sqrt(Math.max(1, values.length - 1)) / denominator);
+    return { available: true, probability, sharpe, expectedMaximum, sampleSize: values.length, approximation: true };
+  }
+
+  function chronologicalValidation(rows, analyses, model, settings = {}) {
+    const start = Math.max(80, Math.floor(rows.length * 0.45));
+    const availableBars = rows.length - start;
+    const foldCount = availableBars >= 160 ? 4 : availableBars >= 90 ? 3 : 2;
+    const foldSize = Math.max(1, Math.floor(availableBars / foldCount));
+    const folds = Array.from({ length: foldCount }, (_, index) => ({
+      index,
+      start: start + index * foldSize,
+      end: index === foldCount - 1 ? rows.length - 1 : start + (index + 1) * foldSize - 1,
+    }));
+    const perStrategy = {};
+    for (const analysis of analyses) {
+      perStrategy[analysis.strategy.mode] = {
+        id: analysis.strategy.mode,
+        label: analysis.strategy.label,
+        folds: folds.map((fold) => tradeSummary(analysis.backtest.trades.filter((trade) => trade.entryIndex >= fold.start && trade.entryIndex <= fold.end))),
+      };
+    }
+    const walkForwardFolds = folds.map((fold, foldIndex) => {
+      const candidates = analyses.map((analysis) => {
+        const priorTrades = analysis.backtest.trades.filter((trade) => trade.entryIndex < fold.start);
+        const prior = tradeSummary(priorTrades);
+        const robustScore = clamp(50 + prior.expectancyR * 34, 0, 100) * 0.40
+          + clamp((Number.isFinite(prior.profitFactor) ? prior.profitFactor : 3) * 30, 0, 100) * 0.25
+          + clamp(prior.trades / Math.max(8, finite(settings.minimumTrades, 20)) * 100, 0, 100) * 0.20
+          + analysis.regimeCompatibility * 100 * 0.15;
+        return { analysis, prior, robustScore };
+      }).sort((a, b) => b.robustScore - a.robustScore);
+      const champion = candidates[0];
+      const challenger = candidates[1] || candidates[0];
+      const trades = champion.analysis.backtest.trades.filter((trade) => trade.entryIndex >= fold.start && trade.entryIndex <= fold.end);
+      return {
+        fold: foldIndex + 1,
+        startIndex: fold.start,
+        endIndex: fold.end,
+        startTime: rows[fold.start]?.time || null,
+        endTime: rows[fold.end]?.time || null,
+        champion: champion.analysis.strategy.mode,
+        challenger: challenger.analysis.strategy.mode,
+        ...tradeSummary(trades),
+        tradeResults: trades,
+      };
+    });
+    const oosTrades = walkForwardFolds.flatMap((fold) => fold.tradeResults);
+    const oos = tradeSummary(oosTrades);
+    const evaluatedFolds = walkForwardFolds.filter((fold) => fold.trades > 0);
+    const profitableFolds = evaluatedFolds.filter((fold) => fold.expectancyR > 0).length;
+    const stabilityPct = evaluatedFolds.length ? profitableFolds / evaluatedFolds.length * 100 : 0;
+    const pbo = probabilityOfBacktestOverfit(perStrategy, foldCount);
+    const dsr = deflatedSharpeApproximation(oosTrades, analyses.length);
+    const firstOosIndex = folds[0]?.start || start;
+    const benchmarkReturnPct = rows[firstOosIndex]?.close > 0 ? (rows[rows.length - 1].close / rows[firstOosIndex].close - 1) * 100 : null;
+    const betaWinRate = (oos.wins + 2) / (oos.trades + 4) * 100;
+    const modelProbability = model?.available ? finite(model.calibratedProbabilityUp, model.probabilityUp) : 50;
+    const evidenceWeight = clamp(oos.trades / 24, 0.25, 0.80);
+    const calibratedProbability = betaWinRate * evidenceWeight + modelProbability * (1 - evidenceWeight);
+    let grade = "D";
+    if (oos.trades >= 20 && oos.expectancyR > 0.10 && stabilityPct >= 75 && (!pbo.available || pbo.value <= 0.25) && dsr.available && dsr.probability >= 0.80) grade = "A";
+    else if (oos.trades >= 12 && oos.expectancyR > 0 && stabilityPct >= 50 && (!pbo.available || pbo.value <= 0.50) && dsr.available && dsr.probability >= 0.55) grade = "B";
+    else if (oos.trades >= 8 && oos.expectancyR > 0 && stabilityPct >= 50) grade = "C";
+    const passed = grade === "A" || grade === "B";
+    const overfitRisk = !pbo.available || !dsr.available ? "BELİRSİZ" : pbo.value > 0.50 || dsr.probability < 0.40 ? "YÜKSEK" : pbo.value > 0.25 || dsr.probability < 0.70 ? "ORTA" : "DÜŞÜK";
+    return {
+      method: "Sabit kurallar + yalnız geçmiş dönemden seçilen anchored walk-forward",
+      folds: walkForwardFolds.map(({ tradeResults, ...fold }) => fold),
+      foldCount,
+      startIndex: firstOosIndex,
+      oos,
+      stabilityPct,
+      profitableFolds,
+      evaluatedFolds: evaluatedFolds.length,
+      benchmarkReturnPct,
+      pbo,
+      deflatedSharpe: dsr,
+      calibratedProbability: clamp(calibratedProbability, 5, 95),
+      calibrationError: model?.available ? model.expectedCalibrationError : null,
+      evidenceGrade: grade,
+      passed,
+      overfitRisk,
+      perStrategy,
+      reasons: [
+        `${oos.trades} dönem dışı işlem; ${evaluatedFolds.length} test diliminin ${profitableFolds} tanesinde pozitif beklenti.`,
+        pbo.available ? `Aşırı uyum olasılığı yaklaşık %${(pbo.value * 100).toFixed(1)}.` : "PBO için yeterli test dilimi yok.",
+        dsr.available ? `Deflated Sharpe güveni yaklaşık %${(dsr.probability * 100).toFixed(1)}.` : dsr.reason,
+      ],
+    };
+  }
+
   function riskPlan(input) {
     const capital = Math.max(0, finite(input.capital));
     const price = Math.max(0, finite(input.price));
@@ -601,21 +829,76 @@
     const safeHorizons = forecastHorizons.length ? forecastHorizons : [1, 5, 20];
     const forecasts = safeHorizons.map((horizon) => analogForecast(rows, features, horizon, settings));
     const prepared = { features, model, forecasts };
+    const regime = classifyRegime(features);
     const baseThreshold = finite(settings.threshold, 62);
     const analyses = safeModes.map((mode) => {
       const profile = STRATEGY_LIBRARY[mode];
       const analysis = analyze(rows, { ...settings, strategyMode: mode, threshold: baseThreshold + profile.thresholdOffset, _prepared: prepared });
       const backtestResult = analysis.backtest;
+      const compatibility = regimeCompatibility(mode, regime.id);
       const profitFactorScore = Number.isFinite(backtestResult.profitFactor) ? clamp(backtestResult.profitFactor * 35, 0, 100) : 100;
       const sampleScore = clamp(backtestResult.totalTrades / Math.max(1, finite(settings.minimumTrades, 20)) * 55, 0, 100);
       const recentScore = clamp(50 + backtestResult.recentExpectancyR * 45, 0, 100);
-      const selectionScore = analysis.setupScore * 0.34 + profitFactorScore * 0.23 + clamp(50 + backtestResult.expectancyR * 40, 0, 100) * 0.17 + recentScore * 0.14 + sampleScore * 0.12 + (analysis.decision === "LONG ADAYI" ? 12 : 0);
-      return { ...analysis, selectionScore: clamp(selectionScore, 0, 100) };
+      const selectionScore = analysis.setupScore * 0.28 + profitFactorScore * 0.20 + clamp(50 + backtestResult.expectancyR * 40, 0, 100) * 0.15 + recentScore * 0.12 + sampleScore * 0.10 + compatibility * 100 * 0.15 + (analysis.decision === "LONG ADAYI" ? 8 : 0);
+      return { ...analysis, regime, regimeCompatibility: compatibility, selectionScore: clamp(selectionScore, 0, 100) };
     });
-    analyses.sort((a, b) => Number(b.decision === "LONG ADAYI") - Number(a.decision === "LONG ADAYI") || b.selectionScore - a.selectionScore || b.backtest.totalTrades - a.backtest.totalTrades);
+    const naiveLeader = [...analyses].sort((a, b) => Number(b.decision === "LONG ADAYI") - Number(a.decision === "LONG ADAYI") || b.selectionScore - a.selectionScore)[0];
+    const validation = chronologicalValidation(rows, analyses, model, settings);
+    for (const analysis of analyses) {
+      const folds = validation.perStrategy[analysis.strategy.mode]?.folds || [];
+      const testedTrades = folds.reduce((sum, fold) => sum + fold.trades, 0);
+      const netR = folds.reduce((sum, fold) => sum + fold.netR, 0);
+      const positiveFolds = folds.filter((fold) => fold.trades > 0 && fold.expectancyR > 0).length;
+      const evaluatedFolds = folds.filter((fold) => fold.trades > 0).length;
+      const stability = evaluatedFolds ? positiveFolds / evaluatedFolds * 100 : 0;
+      const expectancy = testedTrades ? netR / testedTrades : 0;
+      const robustnessScore = clamp(50 + expectancy * 38, 0, 100) * 0.50 + stability * 0.30 + clamp(testedTrades / 18 * 100, 0, 100) * 0.20;
+      analysis.validationSummary = { testedTrades, expectancyR: expectancy, stabilityPct: stability, positiveFolds, evaluatedFolds, robustnessScore };
+      analysis.v3SelectionScore = clamp(analysis.selectionScore * 0.65 + robustnessScore * 0.25 + analysis.regimeCompatibility * 100 * 0.10, 0, 100);
+    }
+    analyses.sort((a, b) => Number(b.decision === "LONG ADAYI") - Number(a.decision === "LONG ADAYI") || b.v3SelectionScore - a.v3SelectionScore || b.backtest.totalTrades - a.backtest.totalTrades);
     const selected = analyses[0];
+    const challenger = analyses[1] || analyses[0];
+    const selectedTrades = selected.backtest.trades.filter((trade) => trade.entryIndex >= validation.startIndex);
+    const selectedDsr = deflatedSharpeApproximation(selectedTrades, analyses.length);
+    const selectedMetrics = selected.validationSummary;
+    let selectedGrade = "D";
+    if (selectedMetrics.testedTrades >= 20 && selectedMetrics.expectancyR > 0.10 && selectedMetrics.stabilityPct >= 75 && selectedDsr.available && selectedDsr.probability >= 0.80) selectedGrade = "A";
+    else if (selectedMetrics.testedTrades >= 12 && selectedMetrics.expectancyR > 0 && selectedMetrics.stabilityPct >= 50 && selectedDsr.available && selectedDsr.probability >= 0.55) selectedGrade = "B";
+    else if (selectedMetrics.testedTrades >= 8 && selectedMetrics.expectancyR > 0 && selectedMetrics.stabilityPct >= 50) selectedGrade = "C";
+    const selectedValidation = {
+      ...validation,
+      selectedStrategy: selected.strategy.mode,
+      selectedStrategyLabel: selected.strategy.label,
+      selectedStrategyMetrics: selectedMetrics,
+      selectedDeflatedSharpe: selectedDsr,
+      evidenceGrade: selectedGrade,
+      passed: validation.passed && (selectedGrade === "A" || selectedGrade === "B"),
+      decisionDelta: naiveLeader.strategy.mode === selected.strategy.mode
+        ? `Rejim ve dönem dışı test, ilk sıradaki ${selected.strategy.label} modelini korudu.`
+        : `Geçmiş puanın lideri ${naiveLeader.strategy.label} iken rejim ve dönem dışı test ${selected.strategy.label} modelini öne aldı.`,
+    };
+    selected.validation = selectedValidation;
+    selected.challenger = {
+      id: challenger.strategy.mode,
+      label: challenger.strategy.label,
+      score: challenger.v3SelectionScore,
+      gap: Math.max(0, selected.v3SelectionScore - challenger.v3SelectionScore),
+      decision: challenger.decision,
+    };
+    selected.regime = regime;
+    selected.estimatedProbability = selectedValidation.calibratedProbability;
+    selected.probabilityLabel = selectedValidation.evidenceGrade === "A" ? "Yüksek kanıt" : selectedValidation.evidenceGrade === "B" ? "Orta kanıt" : "Düşük kanıt";
+    selected.agents = [
+      ...selected.agents,
+      { name: "Walk-forward Denetçisi", status: selectedValidation.passed ? "Geçti" : "Reddetti", score: selectedValidation.stabilityPct, detail: `${selectedValidation.foldCount} dönem, ${selectedValidation.oos.trades} dönem dışı işlem, kanıt ${selectedValidation.evidenceGrade}.` },
+      { name: "Aşırı Uyum Denetçisi", status: selectedValidation.overfitRisk, score: selectedValidation.pbo.available ? 100 - selectedValidation.pbo.value * 100 : 0, detail: selectedValidation.pbo.available ? `PBO yaklaşık %${(selectedValidation.pbo.value * 100).toFixed(1)}; Deflated Sharpe ${selectedValidation.selectedDeflatedSharpe.available ? `%${(selectedValidation.selectedDeflatedSharpe.probability * 100).toFixed(1)}` : "hesaplanamadı"}.` : "Test dilimi yetersiz." },
+    ];
     return {
       selected,
+      challenger: selected.challenger,
+      regime,
+      validation: selectedValidation,
       strategies: analyses.map((analysis) => ({
         id: analysis.strategy.mode,
         label: analysis.strategy.label,
@@ -623,7 +906,9 @@
         setupScore: analysis.setupScore,
         threshold: analysis.strategy.threshold,
         regime: analysis.strategy.regime,
-        selectionScore: analysis.selectionScore,
+        selectionScore: analysis.v3SelectionScore,
+        regimeCompatibility: analysis.regimeCompatibility,
+        validation: analysis.validationSummary,
         trades: analysis.backtest.totalTrades,
         profitFactor: analysis.backtest.profitFactor,
         expectancyR: analysis.backtest.expectancyR,
@@ -632,5 +917,5 @@
     };
   }
 
-  return { STRATEGY_LIBRARY, parseCsv, analyze, analyzeStrategies, strategySetup, riskPlan, wilsonInterval, featureMatrix, backtest, trainLocalModel, analogForecast, monteCarloStress };
+  return { STRATEGY_LIBRARY, parseCsv, analyze, analyzeStrategies, strategySetup, riskPlan, wilsonInterval, featureMatrix, backtest, trainLocalModel, analogForecast, monteCarloStress, classifyRegime, regimeCompatibility, chronologicalValidation, deflatedSharpeApproximation };
 });

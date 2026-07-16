@@ -1,4 +1,4 @@
-# FinPilot AI v2.1
+# FinPilot AI v3.0
 
 FinPilot AI; portföy takibi, yatırım bütçesi, varlık dağılımı, risk görünümü, hedefler ve açıklanabilir finansal analiz sunan Türkçe bir karar destek uygulamasıdır.
 
@@ -60,13 +60,16 @@ npm start
 - İş Yatırım temel tablosundan fiili dolaşım piyasa değerine göre en fazla 120 likit BIST hissesi seçer; veri kaynağı bozulursa 30 hisselik yedek havuza geçer.
 - Binance'in anahtarsız herkese açık piyasa verisinden en fazla 140 likit USDT spot çifti seçer; stablecoin ve `UP/DOWN/BULL/BEAR` kaldıraçlı tokenları dışlar.
 - BIST için 1, 5 ve 20 işlem günü; kripto için 4 saat, 1 gün ve 7 gün yükseliş/düşüş/yatay olasılığı ile beklenen aralık gösterir.
-- Trend devamı, geri çekilme, kırılım teyidi ve yatay piyasa dönüşü stratejilerini aynı veri üzerinde ayrı ayrı backtest eder; geçerli kurulumlara öncelik vererek en güçlü yaklaşımı seçer.
-- Momentum, hacim, masraflı backtest, yakın dönem rejimi, kronolojik yerel model ve 250 senaryolu Monte Carlo stres testi uygular.
-- BIST temel oranlarını banka/finans, holding, gayrimenkul, büyüme-hizmet ve sanayi için farklı sektör ağırlıklarıyla karşılaştırır; güncel KAP ayrıca zorunlu kapıdır. Kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı kapılardır.
+- Trend devamı, geri çekilme, kırılım teyidi ve yatay piyasa dönüşü stratejilerini ayrı backtest eder; güncel rejime göre bir champion ve challenger seçer.
+- Sabit kurallı anchored walk-forward dilimleri, dönem dışı işlemler, olasılık kalibrasyonu, yaklaşık PBO ve Deflated Sharpe ile aşırı uyum riskini ölçer. Kanıt notu `A` veya `B` değilse olumlu sinyal açılmaz.
+- Momentum, hacim, masraflı backtest, yakın dönem davranışı ve 250 senaryolu Monte Carlo stres testi uygular.
+- BIST temel oranlarını sektör ağırlıklarıyla karşılaştırır; veri kapsamı, likidite ve sektör örnek derinliğini ayrı temel sağlık bileşenleri olarak gösterir. KAP bildirimlerini olay türü, yön ve şirket büyüklüğüne göre önemlendirir; tanımlı ciddi riskler zorunlu kapıyı kapatır.
+- Kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı kapılardır.
 - Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar; reddedilen her kapıda gerçekleşen değer ile gerekli eşiği sayısal olarak gösterir.
 - Destek geri çekilmesi, EMA yeniden testi ve ATR dengeli olmak üzere üç emir planı hesaplar. Fiyat adımına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef yalnızca geçerli `YATIR` sinyalinde etkinleşir.
-- `Tümü`, `BIST`, `Kripto`, `Takip` ve `Geçmiş` sekmeleri vardır. Takip, en fazla üç eksik kapısı kalan varlıkların taramadan taramaya ilerlemesini ölçer; Geçmiş ise sinyalleri sonraki kapanmış tarama fiyatlarıyla izler.
-- Aynı piyasa ve stratejide en az 12 izlenen sonuç biriktiğinde kazanma oranı `%40`ın veya ortalama sonuç `0R`ın altına düşerse performans koruması yeni olumlu sinyali kilitler. Bu izleme gerçek aracı kurum gerçekleşmesi değildir.
+- Portföy kapısı açık kâğıt işlemleri hesaba katar; toplam pozisyon, BIST sektör yoğunluğu, kripto yoğunluğu ve aynı piyasadaki getiri korelasyonunu sınırlar.
+- `Tümü`, `BIST`, `Kripto`, `Takip` ve `Geçmiş` sekmeleri vardır. Geçmişte sinyal önce `EMİR BEKLİYOR` olur; limit sonraki yeni kapanmış mumda görülürse `AKTİF` sayılır. İlk hedefte yarım çıkış ve maliyete taşınan stop ayrıca izlenir; aynı mumdaki stop/hedef çakışmasında stop önce kabul edilir.
+- Aynı piyasa ve stratejide en az 12 sonuç biriktiğinde pozitif sonuç oranı `%40`ın veya ortalama sonuç `0R`ın altına düşerse kâğıt performans koruması yeni olumlu sinyali kilitler. Bu izleme gerçek aracı kurum gerçekleşmesi değildir.
 - Bir piyasa kaynağı hata verse bile diğer piyasanın taraması devam eder. Eksik veya eski veriden olumlu sinyal üretilmez.
 - Yeni `YATIR` sonucu oluştuğunda ve takipteki bir varlık tek eksik kapıya yaklaştığında yerel Chrome bildirimi gösterir. Tarama, Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir.
 - İsteğe bağlı Pine Script v6 araçları yalnızca grafik teyidi içindir; TradingView'in fiyat/indikatör verisi için halka açık bir API'si olmadığından panel veriyi TradingView'den çekmez.

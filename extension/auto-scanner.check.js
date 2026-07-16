@@ -46,6 +46,8 @@ assert.equal(parsedFundamentals.get("THYAO").sector, "Havayolları");
 assert.equal(parsedFundamentals.get("THYAO").pe, 3.2);
 assert.equal(parsedFundamentals.get("THYAO").marketCapTryM, 455400);
 assert.ok(parsedFundamentals.get("THYAO").score > parsedFundamentals.get("PGSUS").score);
+assert.equal(parsedFundamentals.get("THYAO").fundamentalHealth.completenessPct, 100);
+assert.ok(parsedFundamentals.get("THYAO").healthGrade);
 assert.equal(scanner.sectorScoringProfile("Bankacılık").id, "financial");
 assert.equal(scanner.sectorScoringProfile("Teknoloji").weights.evSales, 40);
 
@@ -78,6 +80,12 @@ assert.equal(kapFeed.available, true);
 assert.equal(kapFeed.bySymbol.get("THYAO").length, 1);
 assert.equal(scanner.kapRiskFromFeed(kapFeed, "THYAO", new Date("2026-07-16T12:00:00Z")).blocked, false);
 assert.equal(scanner.kapRiskFromFeed(kapFeed, "ASELS", new Date("2026-07-16T12:00:00Z")).blocked, true);
+const contractEvent = scanner.classifyKapEvent({ date: "2026-07-16", text: "1.000 milyon TL tutarında yeni sözleşme imzalandı" }, { marketCapTryM: 10_000 }, new Date("2026-07-16T12:00:00Z"));
+assert.equal(contractEvent.direction, "OLUMLU");
+assert.equal(contractEvent.materiality, "YÜKSEK");
+assert.equal(contractEvent.amountTry, 1_000_000_000);
+const eventMap = scanner.kapEventIntelligence([{ date: "2026-07-16", text: "1.000 milyon TL tutarında yeni sözleşme imzalandı" }], { marketCapTryM: 10_000 }, new Date("2026-07-16T12:00:00Z"));
+assert.equal(eventMap.direction, "OLUMLU");
 
 const broadFundamentals = new Map(Array.from({ length: 40 }, (_, index) => {
   const symbol = `A${String(index).padStart(3, "0")}`;
@@ -120,6 +128,9 @@ const mockFetch = async (url) => {
   assert.deepEqual(Object.keys(result.recommendations[0].forecasts).sort(), ["1", "20", "5"]);
   assert.equal(result.recommendations.find((item) => item.symbol === "THYAO").fundamental.available, true);
   assert.equal(result.recommendations[0].strategy.comparisons.length, 4);
+  assert.ok(result.recommendations[0].validation);
+  assert.ok(result.recommendations[0].returnSignature.length >= 30);
+  assert.ok(result.recommendations[0].currentBar.high >= result.recommendations[0].currentBar.low);
   assert.equal(result.recommendations[0].orderPlan.alternatives.length, 3);
   assert.ok(Object.values(result.recommendations[0].gateDiagnostics).every((gate) => typeof gate.message === "string"));
 

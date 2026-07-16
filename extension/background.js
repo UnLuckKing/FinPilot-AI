@@ -1,10 +1,10 @@
-importScripts("engine.js", "auto-scanner.js", "crypto-scanner.js", "market-aggregator.js", "signal-tracker.js", "near-watch.js");
+importScripts("engine.js", "auto-scanner.js", "crypto-scanner.js", "market-aggregator.js", "signal-tracker.js", "portfolio-risk.js", "near-watch.js");
 
 const SCAN_KEY = "finpilotAutomaticScan";
 const HISTORY_KEY = "finpilotSignalHistory";
 const WATCH_KEY = "finpilotNearWatch";
 const ALARM_NAME = "finpilot-bist-auto-scan";
-const RESULT_VERSION = 5;
+const RESULT_VERSION = 6;
 let scanPromise = null;
 
 function resultNeedsRefresh(result) {
@@ -92,6 +92,7 @@ async function runAutomaticScan() {
     const bist = FinPilotSignalTracker.applyPerformanceGuard(bistRaw, previousHistory);
     const crypto = FinPilotSignalTracker.applyPerformanceGuard(cryptoRaw, previousHistory);
     let result = FinPilotMarketAggregator.combineResults(bist, crypto, new Date());
+    result = FinPilotPortfolioRisk.applyPortfolioRisk(result, previousHistory);
     const history = FinPilotSignalTracker.updateHistory(previousHistory, result, new Date());
     const watch = FinPilotNearWatch.updateWatch(stored[WATCH_KEY] || null, result, new Date());
     result = FinPilotNearWatch.attachToResult(result, watch);

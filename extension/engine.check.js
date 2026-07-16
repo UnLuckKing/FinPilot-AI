@@ -18,6 +18,9 @@ const analysis = engine.analyze(rows, { threshold: 56, minimumTrades: 5, rewardR
 assert.ok(analysis.latest.scoreLong >= 0);
 assert.ok(analysis.estimatedProbability >= 5 && analysis.estimatedProbability <= 95);
 assert.ok(analysis.model.available);
+assert.equal(analysis.model.reliability.length, 5);
+assert.ok(analysis.model.expectedCalibrationError >= 0);
+assert.ok(analysis.model.calibratedProbabilityUp >= 0 && analysis.model.calibratedProbabilityUp <= 100);
 assert.equal(analysis.agents.length, 8);
 assert.equal(analysis.strategy.mode, "trend");
 assert.ok(analysis.agents.some((agent) => agent.name === "Strateji Seçici"));
@@ -38,9 +41,16 @@ assert.ok(cryptoAnalysis.agents.some((agent) => agent.name === "Yön Ajanı" && 
 
 const strategySuite = engine.analyzeStrategies(rows, { threshold: 56, minimumTrades: 5, rewardRisk: 1.5 });
 assert.ok(strategySuite.selected);
+assert.ok(strategySuite.validation);
+assert.ok(strategySuite.validation.foldCount >= 2);
+assert.ok(["A", "B", "C", "D"].includes(strategySuite.validation.evidenceGrade));
+assert.ok(["strongTrend", "weakTrend", "sideways", "highVolatility", "riskOff", "liquidityPump"].includes(strategySuite.regime.id));
+assert.ok(strategySuite.challenger);
+assert.equal(strategySuite.selected.agents.length, 10);
 assert.equal(strategySuite.strategies.length, 4);
 assert.deepEqual(strategySuite.strategies.map((item) => item.id).sort(), ["breakout", "meanReversion", "pullback", "trend"]);
 assert.ok(strategySuite.strategies.every((item) => Number.isFinite(item.selectionScore)));
+assert.ok(strategySuite.strategies.every((item) => item.validation && Number.isFinite(item.validation.robustnessScore)));
 
 const plan = engine.riskPlan({ capital: 100000, price: 100, atr: 2, riskPct: 0.5, lossStreak: 2 });
 assert.equal(plan.adjustedRiskPct, 0.25);

@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 require("./market-aggregator.js");
 require("./near-watch.js");
+require("./portfolio-risk.js");
 
 class FakeElement {
   constructor() {
@@ -19,7 +20,7 @@ class FakeElement {
 const ids = [
   "pageStatus", "activeChart", "progressCard", "runScan", "progressTitle", "progressText", "progressFill",
   "emptyState", "resultArea", "marketDecision", "marketMeta", "candidateCount", "marketDecisionCard",
-  "scannedCount", "bistScanned", "cryptoScanned", "marketBreadth", "dataAsOf", "generatedAt", "kapCheckedCount",
+  "scannedCount", "bistScanned", "cryptoScanned", "marketBreadth", "dataAsOf", "generatedAt", "kapCheckedCount", "evidenceACount", "paperOpenCount",
   "tabAll", "tabBist", "tabCrypto", "tabWatch", "tabHistory", "allCount", "bistCount", "cryptoCount", "watchCount", "historyCount",
   "recommendationTitle", "universeLabel", "recommendations", "historyPanel", "errorDetails", "errorCount", "errorList",
 ];
@@ -30,9 +31,10 @@ const forecastsBist = { "1": { available: true, direction: "YATAY", probabilityU
 const bistItem = {
   market: "bist", marketLabel: "BIST", displaySymbol: "THYAO", priceDecimals: 2, symbol: "THYAO", action: "YATIR", eligible: true, rankScore: 82, price: 312.5, dataDate: "2026-07-15", dataAgeBusinessDays: 1, direction: "YÜKSELİŞ",
   historicalProbability: 54.2, probabilityLow: 41, probabilityHigh: 67, profitFactor: 1.44, recentExpectancyR: 0.18, modelProbabilityUp: 61.4, stress: { available: true, profitablePct: 68 }, fundamental: { available: true, score: 76, status: "Güçlü" }, kap: { available: true, blocked: false, status: "Yakın risk işareti yok" }, forecasts: forecastsBist,
+  evidenceGrade: "A", calibratedProbabilityUp: 63, regime: { id: "strongTrend", label: "Güçlü yükseliş trendi" }, challenger: { label: "Geri çekilme" }, decisionDelta: "Rejim ve dönem dışı test trend modelini korudu.", validation: { evidenceGrade: "A", calibratedProbability: 62.5, foldCount: 4, stabilityPct: 75, overfitRisk: "DÜŞÜK", oos: { trades: 24 }, pbo: { available: true, value: 0.17 }, selectedDeflatedSharpe: { available: true, probability: 0.84 } }, portfolioRisk: { maxCorrelation: 0.44, correlatedWith: "ASELS", suggestedRiskPct: 0.4 },
   forecastDisplay: [{ key: "1", label: "1 GÜN" }, { key: "5", label: "5 GÜN" }, { key: "20", label: "20 GÜN" }],
   orderPlan: { limitBuy: 309, stopTrigger: 297, stopLimit: 296, target1: 327, target2: 335, validUntil: "2026-07-16" },
-  gates: { setup: true, backtest: true, model: true, fundamental: true, direction: true, stress: true, orderPlan: true, dataFresh: true, kap: true, market: true }, failedGates: [],
+  gates: { setup: true, backtest: true, model: true, validation: true, fundamental: true, direction: true, stress: true, orderPlan: true, dataFresh: true, kap: true, market: true, portfolio: true }, failedGates: [],
   reasons: ["Trend olumlu.", "KAP kontrolü tamamlandı."], links: { tradingView: "https://tr.tradingview.com/chart/?symbol=BIST%3ATHYAO", isYatirim: "https://www.isyatirim.com.tr/", kap: "https://kap.org.tr/tr/bildirim-sorgu" },
 };
 const cryptoItem = {
@@ -46,12 +48,12 @@ const cryptoItem = {
 };
 
 const cached = {
-  version: 5, generatedAt: "2026-07-16T09:00:00.000Z", dataAsOf: "2026-07-16T08:00:00Z", universe: "Geniş BIST + Binance likit USDT spot", scannedCount: 230, requestedCount: 260, errorCount: 0, candidateCount: 1, marketDecision: "YATIR · 1 varlık tüm kapıları geçti", research: { kapCheckedCount: 12, deepResearchLimit: 12 }, marketRegime: { gateOpen: true, dataSufficient: true, coveragePct: 88, breadthPct: 53 }, errors: [], recommendations: [bistItem, cryptoItem], snapshot: [], nearWatch: { count: 1, note: "Kapı mesafesi izlenir.", items: [{ key: "crypto:BTCUSDT" }] },
+  version: 6, generatedAt: "2026-07-16T09:00:00.000Z", dataAsOf: "2026-07-16T08:00:00Z", universe: "Geniş BIST + Binance likit USDT spot", scannedCount: 230, requestedCount: 260, errorCount: 0, candidateCount: 1, marketDecision: "YATIR · 1 varlık tüm kapıları geçti", research: { kapCheckedCount: 12, deepResearchLimit: 12 }, marketRegime: { gateOpen: true, dataSufficient: true, coveragePct: 88, breadthPct: 53 }, errors: [], recommendations: [bistItem, cryptoItem], snapshot: [], nearWatch: { count: 1, note: "Kapı mesafesi izlenir.", items: [{ key: "crypto:BTCUSDT" }] },
   markets: {
     bist: { universe: "İş Yatırım geniş likit BIST evreni", scannedCount: 100, requestedCount: 120, marketDecision: "YATIR · 1 hisse", marketRegime: { gateOpen: true } },
     crypto: { universe: "Binance likit USDT spot evreni", scannedCount: 130, requestedCount: 140, marketDecision: "YATIRMA · tüm koşulları geçen kripto yok", marketRegime: { gateOpen: true } },
   },
-  signalHistory: { stats: { open: 1, resolved: 0, totalR: 0, winRate: null }, note: "Gerçek işlem kaydı değildir.", records: [{ market: "bist", marketLabel: "BIST", symbol: "THYAO", displaySymbol: "THYAO", openedAt: "2026-07-16T08:00:00Z", entry: 309, lastPrice: 312.5, status: "AÇIK" }] },
+  signalHistory: { stats: { open: 1, pending: 1, active: 0, resolved: 0, totalR: 0, winRate: null, averageR: null }, note: "Gerçek işlem kaydı değildir.", records: [{ key: "bist:THYAO", market: "bist", marketLabel: "BIST", symbol: "THYAO", displaySymbol: "THYAO", createdAt: "2026-07-16T08:00:00Z", entry: 309, lastPrice: 312.5, status: "EMİR BEKLİYOR" }] },
 };
 
 global.chrome = {
@@ -76,9 +78,14 @@ setTimeout(() => {
     assert.match(elements.recommendations.innerHTML, /YATIR'A 1 KAPI KALDI/);
     assert.match(elements.recommendations.innerHTML, /1 gün yükseliş %51\/%56 gerekli/);
     assert.match(elements.recommendations.innerHTML, /Geri çekilme/);
-    assert.match(elements.recommendations.innerHTML, /NEDEN YATIRMA|YATIR'A 1 KAPI KALDI/);
+    assert.match(elements.recommendations.innerHTML, /NE DEĞİŞMELİ|YATIR'A 1 KAPI KALDI/);
+    assert.match(elements.recommendations.innerHTML, /KANIT DOSYASI v3/);
+    assert.match(elements.recommendations.innerHTML, /Walk-forward/);
+    assert.match(elements.recommendations.innerHTML, /KÂĞIT EMİR/);
     assert.equal(elements.kapCheckedCount.textContent, "12/12");
     assert.equal(elements.watchCount.textContent, 1);
+    assert.equal(elements.evidenceACount.textContent, 2);
+    assert.equal(elements.paperOpenCount.textContent, 1);
     elements.tabCrypto.listeners.click();
     assert.match(elements.recommendations.innerHTML, /BTC/);
     assert.doesNotMatch(elements.recommendations.innerHTML, /THYAO/);

@@ -72,11 +72,17 @@ function metricCells(item) {
   const probabilityRange = item.probabilityLow == null ? "Örneklem az" : `%${fmt(item.probabilityLow, 0)}–${fmt(item.probabilityHigh, 0)}`;
   const stressScore = item.stress?.available ? percent(item.stress.profitablePct, 0) : "—";
   const common = [
+    ["Kanıt notu", item.evidenceGrade || item.validation?.evidenceGrade || "D"],
+    ["Kalibre olasılık", percent(item.validation?.calibratedProbability ?? item.calibratedProbabilityUp)],
+    ["Dönem dışı işlem", item.validation?.oos?.trades ?? "—"],
+    ["Dilim tutarlılığı", percent(item.validation?.stabilityPct, 0)],
+    ["Aşırı uyum", item.validation?.overfitRisk || "BELİRSİZ"],
+    ["Piyasa rejimi", item.regime?.label || "Belirsiz"],
     ["Geçmiş kazanma", percent(item.historicalProbability)],
     ["%95 aralık", probabilityRange],
     ["Kâr faktörü", profitFactor],
     ["Yakın beklenti", `${fmt(item.recentExpectancyR, 2)}R`],
-    ["ML yükseliş", percent(item.modelProbabilityUp)],
+    ["ML ham yükseliş", percent(item.modelProbabilityUp)],
     ["Stres pozitif", stressScore],
   ];
   const special = item.market === "crypto"
@@ -85,16 +91,46 @@ function metricCells(item) {
   return [...common, ...special].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
 }
 
+function paperRecordFor(item) {
+  const key = `${item.market || "bist"}:${item.symbol}`;
+  return (currentResult?.signalHistory?.records || []).find((record) => (record.key || `${record.market || "bist"}:${record.symbol}`) === key && ["EMİR BEKLİYOR", "AKTİF", "TAŞINAN STOP"].includes(record.status)) || null;
+}
+
+function evidencePanel(item) {
+  const validation = item.validation || {};
+  const dsr = validation.selectedDeflatedSharpe || validation.deflatedSharpe || {};
+  const pbo = validation.pbo || {};
+  const portfolio = item.portfolioRisk || {};
+  const paper = paperRecordFor(item);
+  const kapEvents = item.kap?.eventIntelligence;
+  const grade = item.evidenceGrade || validation.evidenceGrade || "D";
+  const pboText = pbo.available ? percent(pbo.value * 100, 0) : "—";
+  const dsrText = dsr.available ? percent(dsr.probability * 100, 0) : "—";
+  const correlation = Number.isFinite(portfolio.maxCorrelation) ? `${fmt(portfolio.maxCorrelation, 2)}${portfolio.correlatedWith ? ` · ${portfolio.correlatedWith}` : ""}` : "—";
+  const kapLine = item.market !== "crypto" && kapEvents?.available
+    ? `<div class="evidence-note kap-event"><b>KAP OLAY HARİTASI · ${escapeHtml(kapEvents.direction)}</b><span>Etki ${fmt(kapEvents.impactScore, 0)} · önemli olay ${kapEvents.materialCount}. Metin sınıflandırması etki garantisi değildir.</span></div>`
+    : "";
+  const paperLine = paper
+    ? `<div class="paper-state"><span>KÂĞIT EMİR</span><b>${escapeHtml(paper.status)}</b><em>${paper.status === "EMİR BEKLİYOR" ? `Limit ${formatPrice(item, paper.entry)} henüz dolmadı` : `Dolum ${formatPrice(item, paper.fillPrice)} · stop ${formatPrice(item, paper.currentStop)}`}</em></div>`
+    : "";
+  return `<section class="evidence-panel grade-${escapeHtml(grade.toLowerCase())}">
+    <div class="evidence-head"><div><span>KANIT DOSYASI v3</span><b>Not ${escapeHtml(grade)}</b></div><em>${escapeHtml(validation.overfitRisk || "BELİRSİZ")} aşırı uyum</em></div>
+    <div class="evidence-grid"><div><span>Walk-forward</span><b>${validation.foldCount || 0} dönem</b></div><div><span>PBO</span><b>${pboText}</b></div><div><span>Deflated Sharpe</span><b>${dsrText}</b></div><div><span>Rejim</span><b>${escapeHtml(item.regime?.label || "Belirsiz")}</b></div><div><span>Rakip model</span><b>${escapeHtml(item.challenger?.label || "—")}</b></div><div><span>Korelasyon</span><b>${escapeHtml(correlation)}</b></div></div>
+    ${item.decisionDelta ? `<div class="evidence-note"><b>KARAR FARKI</b><span>${escapeHtml(item.decisionDelta)}</span></div>` : ""}
+    ${kapLine}${paperLine}
+  </section>`;
+}
+
 function recommendationCard(item, index) {
   const actionClass = item.eligible ? "candidate" : item.nearMiss ? "watch" : "blocked";
   const order = item.orderPlan || item.levels || {};
-  const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: item.market === "crypto" ? "BTC/piyasa" : "Piyasa", performance: "Performans" };
+  const gateNames = { setup: "Kurulum", backtest: "Backtest", model: "ML", validation: "Dönem dışı test", fundamental: "Temel", direction: "Yön", recentRegime: "Yakın dönem", stress: "Stres", liquidity: "Likidite/pump", orderPlan: "Emir planı", dataFresh: "Tazelik", kap: "KAP", market: item.market === "crypto" ? "BTC/piyasa" : "Piyasa", performance: "Kâğıt performans", portfolio: "Portföy riski" };
   const gates = Object.entries(item.gates || {}).map(([name, passed]) => `<span class="gate ${passed ? "pass" : "fail"}">${passed ? "✓" : "×"} ${escapeHtml(gateNames[name] || name)}</span>`).join("");
   const failedItems = item.failedGates || Object.entries(item.gates || {}).filter(([, passed]) => !passed).map(([key]) => ({ key, label: gateNames[key] || key }));
   const failedMessages = failedItems.map((gate) => gate.message || item.gateDiagnostics?.[gate.key]?.message || gate.label).filter(Boolean);
   const failedBanner = item.eligible
     ? `<div class="gate-summary passed"><b>TÜM KAPILAR GEÇTİ</b><span>${escapeHtml(order.label || "Limit ve stop planı")} etkin.</span></div>`
-    : `<div class="gate-summary failed"><b>${item.nearMiss ? `YATIR'A ${item.distanceToEligible || failedItems.length} KAPI KALDI` : "NEDEN YATIRMA?"}</b><span>${escapeHtml(failedMessages.length ? failedMessages.slice(0, 3).join(" | ") : "Güvenlik koşulları tamamlanmadı")}</span></div>`;
+    : `<div class="gate-summary failed"><b>${item.nearMiss ? `YATIR'A ${item.distanceToEligible || failedItems.length} KAPI KALDI` : "NE DEĞİŞMELİ?"}</b><span>${escapeHtml(failedMessages.length ? failedMessages.slice(0, 3).join(" | ") : "Güvenlik koşulları tamamlanmadı")}</span></div>`;
   const reasons = (Array.isArray(item.reasons) ? item.reasons : ["Araştırma gerekçesi mevcut değil."]).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
   const orderSection = item.eligible ? `<div class="order-title"><span>${escapeHtml(order.label || "ÖNERİLEN EMİR PLANI")}</span><b>${order.validPlanCount || 1}/3 plan geçerli</b></div>
     <div class="levels order-levels"><div class="entry"><span>Alış limiti</span><b>${formatPrice(item, order.limitBuy)}</b></div><div class="stop"><span>Stop tetik</span><b>${formatPrice(item, order.stopTrigger)}</b></div><div class="stop"><span>Stop-limit</span><b>${formatPrice(item, order.stopLimit)}</b></div><div class="target"><span>Hedef 1</span><b>${formatPrice(item, order.target1)}</b></div><div class="target"><span>Hedef 2</span><b>${formatPrice(item, order.target2)}</b></div><div><span>Geçerlilik</span><b>${escapeHtml(order.validUntil || "Yeni veri gelene kadar")}</b></div></div>` : `<div class="inactive-order"><b>YATIRMA</b><span>Emir seviyesi etkin değil; eksik kapılar yukarıda açıkça gösteriliyor.</span></div>`;
@@ -115,12 +151,13 @@ function recommendationCard(item, index) {
     ${watchFlag}
     ${failedBanner}
     <div class="strategy-line"><span>SEÇİLEN STRATEJİ</span><b>${escapeHtml(item.strategy?.label || "Trend devamı")}</b><em>${item.strategy?.comparisons?.length || 1} model karşılaştırıldı</em></div>
+    ${evidencePanel(item)}
     <div class="direction-title"><span>YÖN ARAŞTIRMASI</span><b>${escapeHtml(item.direction || "BELİRSİZ")}</b></div>
     <div class="forecast-grid">${forecasts}</div>
     <div class="stock-metrics">${metricCells(item)}</div>
     ${orderSection}
     <div class="gate-list">${gates}</div>
-    <p class="stop-warning">⚠ Stop-limit sert harekette gerçekleşmeyebilir. Seviye araştırma önerisidir; otomatik emir gönderilmez.</p>
+    <p class="stop-warning">⚠ Stop-limit sert harekette gerçekleşmeyebilir. Sistem yalnız kapanmış mumlarla otomatik kâğıt işlem izler; İş Bankası veya Binance'a emir göndermez.</p>
     <details class="research-details"><summary>Araştırma gerekçelerini göster</summary><ul class="reasons">${reasons}</ul></details>
     <div class="stock-links">${links}</div>
   </article>`;
@@ -132,10 +169,13 @@ function renderHistory(history) {
   const winRate = stats.winRate == null ? "Henüz ölçülmedi" : `%${fmt(stats.winRate, 1)}`;
   const rows = records.map((record) => {
     const item = { market: record.market, priceDecimals: record.market === "crypto" ? 8 : 2 };
-    const statusClass = record.status === "AÇIK" ? "open" : record.status?.startsWith("HEDEF") ? "win" : record.status === "STOP" ? "loss" : "expired";
-    return `<article class="history-row"><div><em class="market-badge ${record.market === "crypto" ? "crypto" : "bist"}">${escapeHtml(record.marketLabel)}</em><b>${escapeHtml(record.displaySymbol || record.symbol)}</b><small>${new Date(record.openedAt).toLocaleString("tr-TR")}</small></div><div><span>Giriş</span><b>${formatPrice(item, record.entry)}</b></div><div><span>Son</span><b>${formatPrice(item, record.lastPrice)}</b></div><strong class="history-status ${statusClass}">${escapeHtml(record.status)}</strong></article>`;
+    const open = ["AÇIK", "EMİR BEKLİYOR", "AKTİF", "TAŞINAN STOP"].includes(record.status);
+    const statusClass = open ? "open" : Number.isFinite(record.resultR) && record.resultR > 0 ? "win" : record.status === "STOP" ? "loss" : "expired";
+    const entryLabel = record.fillPrice ? "Dolum" : "Limit";
+    const resultText = Number.isFinite(record.resultR) ? `${record.resultR > 0 ? "+" : ""}${fmt(record.resultR, 2)}R` : record.status === "TAŞINAN STOP" ? `${fmt(record.realizedR, 2)}R gerçekleşti` : "—";
+    return `<article class="history-row"><div><em class="market-badge ${record.market === "crypto" ? "crypto" : "bist"}">${escapeHtml(record.marketLabel)}</em><b>${escapeHtml(record.displaySymbol || record.symbol)}</b><small>${new Date(record.createdAt || record.openedAt).toLocaleString("tr-TR")}</small></div><div><span>${entryLabel}</span><b>${formatPrice(item, record.fillPrice || record.entry)}</b></div><div><span>Son / sonuç</span><b>${escapeHtml(resultText)}</b></div><strong class="history-status ${statusClass}">${escapeHtml(record.status)}</strong></article>`;
   }).join("");
-  return `<div class="history-summary"><article><span>Açık</span><b>${stats.open || 0}</b></article><article><span>Sonuçlanan</span><b>${stats.resolved || 0}</b></article><article><span>Hedef oranı</span><b>${winRate}</b></article><article><span>Toplam R</span><b>${fmt(stats.totalR || 0, 2)}R</b></article></div><p class="history-note">${escapeHtml(history?.note || "Geçmiş, yalnızca tarama anlarındaki fiyatlarla takip edilir; gerçek işlem kaydı değildir.")}</p>${rows || '<div class="empty-card"><h2>Henüz YATIR sinyali yok</h2><p>Bir varlık tüm kapıları geçtiğinde burada otomatik izlenmeye başlar.</p></div>'}`;
+  return `<div class="history-summary"><article><span>Limit bekleyen</span><b>${stats.pending || 0}</b></article><article><span>Aktif</span><b>${stats.active || 0}</b></article><article><span>Sonuçlanan</span><b>${stats.resolved || 0}</b></article><article><span>Pozitif sonuç</span><b>${winRate}</b></article><article><span>Ortalama</span><b>${stats.averageR == null ? "—" : `${fmt(stats.averageR, 2)}R`}</b></article><article><span>Toplam R</span><b>${fmt(stats.totalR || 0, 2)}R</b></article></div><p class="history-note">${escapeHtml(history?.note || "Kapanmış mumlarla otomatik kâğıt işlem izlenir; gerçek işlem kaydı değildir.")}</p>${rows || '<div class="empty-card"><h2>Henüz kâğıt emir yok</h2><p>Bir varlık tüm kapıları geçtiğinde limit emri otomatik izlenmeye başlar; dolmadan pozisyon sayılmaz.</p></div>'}`;
 }
 
 function legacyToCombined(result) {
@@ -159,7 +199,7 @@ function renderActiveTab() {
   $("historyPanel").hidden = !isHistory;
   if (isHistory) {
     $("recommendationTitle").textContent = "Sinyal geçmişi";
-    $("universeLabel").textContent = "Gerçek emir değil · kapanmış tarama verisi";
+    $("universeLabel").textContent = "Otomatik kâğıt emir · gerçek aracı kurum işlemi değil";
     $("historyPanel").innerHTML = renderHistory(currentResult.signalHistory);
     return;
   }
@@ -192,6 +232,8 @@ function render(input) {
   $("dataAsOf").textContent = result.dataAsOf ? String(result.dataAsOf).slice(0, 16).replace("T", " ") : "—";
   $("generatedAt").textContent = new Date(result.generatedAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   $("kapCheckedCount").textContent = `${result.research?.kapCheckedCount ?? 0}/${result.research?.deepResearchLimit ?? "—"}`;
+  $("paperOpenCount").textContent = result.signalHistory?.stats?.open || 0;
+  $("evidenceACount").textContent = (result.recommendations || []).filter((item) => item.evidenceGrade === "A" || item.validation?.evidenceGrade === "A").length;
   const bistCount = (result.recommendations || []).filter((item) => item.market !== "crypto").length;
   const cryptoCount = (result.recommendations || []).filter((item) => item.market === "crypto").length;
   $("allCount").textContent = (result.recommendations || []).length;
@@ -218,7 +260,8 @@ async function fallbackScan() {
   const cryptoRaw = cryptoOutcome.status === "fulfilled" ? cryptoOutcome.value : empty("crypto", cryptoOutcome);
   const bist = FinPilotSignalTracker.applyPerformanceGuard(bistRaw, stored.finpilotSignalHistory || null);
   const crypto = FinPilotSignalTracker.applyPerformanceGuard(cryptoRaw, stored.finpilotSignalHistory || null);
-  const result = FinPilotMarketAggregator.combineResults(bist, crypto, new Date());
+  let result = FinPilotMarketAggregator.combineResults(bist, crypto, new Date());
+  result = FinPilotPortfolioRisk.applyPortfolioRisk(result, stored.finpilotSignalHistory || null);
   const history = FinPilotSignalTracker.updateHistory(stored.finpilotSignalHistory || null, result, new Date());
   const watch = FinPilotNearWatch.updateWatch(stored.finpilotNearWatch || null, result, new Date());
   const watchedResult = FinPilotNearWatch.attachToResult(result, watch);
