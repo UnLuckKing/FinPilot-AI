@@ -1,0 +1,217 @@
+//@version=6
+indicator("FinPilot AutoTrader v1 — 15D Canlı", overlay = true, max_labels_count = 500, max_lines_count = 100)
+
+// Normal kullanıcı için tek strateji girdisi sermayedir. Diğer değerler sürümlü FinPilot v1 kurallarıdır.
+capital = input.float(100000, "Kullanılacak sermaye (₺)", minval = 1000, step = 1000, group = "Kullanıcı")
+gatewayToken = input.string("", "Webhook anahtarı", group = "Bağlantı", display = display.none)
+sessionInput = input.session("1000-1800", "BIST normal seans", group = "Bağlantı", display = display.none)
+indexSymbol = input.symbol("BIST:XU100", "Piyasa endeksi", group = "Bağlantı", display = display.none)
+
+// FinPilot v1.0.0 sabit strateji yapılandırması
+float riskFraction = 0.005
+float maxPositionFraction = 0.30
+float minimumRelativeVolume = 1.15
+float minimumAdx = 18.0
+float minimumRsi = 52.0
+float maximumRsi = 72.0
+float maximumVwapDistanceAtr = 1.25
+float minimumAtrPercent = 0.35
+float maximumAtrPercent = 4.0
+float stopAtrMultiplier = 1.25
+float limitOffsetBps = 4.0
+float commissionAndSlipRoundTrip = 0.0036
+int minimumScore = 72
+
+bool is15Minute = timeframe.isminutes and timeframe.multiplier == 15
+bool inSession = not na(time(timeframe.period, sessionInput, "Europe/Istanbul"))
+int localHour = hour(time, "Europe/Istanbul")
+int localMinute = minute(time, "Europe/Istanbul")
+bool beforeEntryCutoff = localHour < 17 or (localHour == 17 and localMinute < 15)
+bool forcedExitWindow = localHour > 17 or (localHour == 17 and localMinute >= 45)
+
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema50 = ta.ema(close, 50)
+float vwap = ta.vwap(hlc3)
+float atr = ta.atr(14)
+float rsi = ta.rsi(close, 14)
+[plusDi, minusDi, adx] = ta.dmi(14, 14)
+float averageVolume = ta.sma(volume, 20)
+float relativeVolume = averageVolume > 0 ? volume / averageVolume : 0.0
+float averageTurnover = ta.sma(close * volume, 20)
+float swingLow = ta.lowest(low, 10)
+float swingHigh = ta.highest(high, 10)
+float atrPercent = close > 0 ? atr / close * 100 : 0.0
+float vwapDistanceAtr = atr > 0 ? math.abs(close - vwap) / atr : 999.0
+
+// [1] + lookahead_on yalnız son kapanmış üst-zaman mumu değerini tüm alt-zaman mumlarına taşır.
+[hourClose, hourEma50] = request.security(syminfo.tickerid, "60", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on)
+[fourHourClose, fourHourEma50] = request.security(syminfo.tickerid, "240", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on)
+[indexClose, indexEma50] = request.security(indexSymbol, "60", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+bool hourBullish = not na(hourClose) and not na(hourEma50) and hourClose > hourEma50
+bool fourHourBullish = not na(fourHourClose) and not na(fourHourEma50) and fourHourClose > fourHourEma50
+bool indexAvailable = not na(indexClose) and not na(indexEma50)
+bool indexBullish = not indexAvailable or indexClose > indexEma50
+bool priceAboveVwap = close > vwap
+bool emaAligned = ema9 > ema21 and ema21 > ema50
+bool notExtended = vwapDistanceAtr <= maximumVwapDistanceAtr
+bool volumePass = relativeVolume >= minimumRelativeVolume
+bool momentumPass = rsi >= minimumRsi and rsi <= maximumRsi
+bool adxPass = adx >= minimumAdx and plusDi > minusDi
+bool atrPass = atrPercent >= minimumAtrPercent and atrPercent <= maximumAtrPercent
+bool liquidityPass = averageTurnover >= 10000000
+
+int score = 0
+score += fourHourBullish ? 14 : 0
+score += hourBullish ? 12 : 0
+score += priceAboveVwap ? 10 : 0
+score += emaAligned ? 13 : 0
+score += notExtended ? 8 : 0
+score += volumePass ? 11 : 0
+score += momentumPass ? 8 : 0
+score += adxPass ? 7 : 0
+score += atrPass ? 6 : 0
+score += liquidityPass ? 6 : 0
+score += indexBullish ? 5 : 0
+
+bool hardGates = fourHourBullish and hourBullish and priceAboveVwap and atr > 0
+bool setupEligible = score >= minimumScore and hardGates
+float entryLimit = math.round_to_mintick(close * (1 - limitOffsetBps / 10000))
+float atrStop = entryLimit - atr * stopAtrMultiplier
+float structureStop = swingLow - atr * 0.15
+float plannedStop = math.round_to_mintick(math.min(atrStop, structureStop))
+float oneR = entryLimit - plannedStop
+float target1 = math.round_to_mintick(entryLimit + oneR)
+float target2 = math.round_to_mintick(entryLimit + oneR * 2)
+float riskBudget = capital * riskFraction
+float riskPerShare = oneR + entryLimit * commissionAndSlipRoundTrip
+int quantityByRisk = riskPerShare > 0 ? int(math.floor(riskBudget / riskPerShare)) : 0
+int quantityByCap = entryLimit > 0 ? int(math.floor(capital * maxPositionFraction / entryLimit)) : 0
+int quantity = math.max(0, math.min(quantityByRisk, quantityByCap))
+float weightedReward = oneR * 1.5 - entryLimit * commissionAndSlipRoundTrip
+float expectedRR = riskPerShare > 0 ? weightedReward / riskPerShare : 0.0
+bool orderPlanValid = quantity > 0 and oneR > 0 and expectedRR >= 1.35
+
+var bool virtualPosition = false
+var int completedSignalsToday = 0
+var int virtualEntryBar = na
+var float virtualEntryPrice = na
+var float virtualEntryRisk = na
+bool newDay = ta.change(time("D")) != 0
+if newDay
+    virtualPosition := false
+    completedSignalsToday := 0
+    virtualEntryBar := na
+    virtualEntryPrice := na
+    virtualEntryRisk := na
+
+bool riskLock = completedSignalsToday >= 3
+bool confirmedBuy = barstate.isconfirmed and is15Minute and inSession and beforeEntryCutoff and not riskLock and not virtualPosition and setupEligible and orderPlanValid
+bool noProgressExit = virtualPosition and not na(virtualEntryBar) and bar_index - virtualEntryBar >= 6 and close < virtualEntryPrice + virtualEntryRisk * 0.25
+bool exitCondition = close < ema21 or close < vwap or rsi < 45 or noProgressExit or forcedExitWindow
+bool confirmedSell = barstate.isconfirmed and virtualPosition and exitCondition
+bool previewBuy = barstate.isrealtime and not barstate.isconfirmed and not virtualPosition and setupEligible and orderPlanValid and beforeEntryCutoff
+bool previewSell = barstate.isrealtime and not barstate.isconfirmed and virtualPosition and exitCondition
+
+string visibleState = not is15Minute ? "İŞLEM YASAK" : riskLock ? "GÜN KAPATILDI" : confirmedBuy ? "ONAYLI AL" : confirmedSell ? "ONAYLI SAT" : previewBuy ? "ÖN AL" : previewSell ? "ÖN SAT" : virtualPosition ? "POZİSYONDA" : "BEKLE"
+
+if confirmedBuy
+    virtualPosition := true
+    completedSignalsToday += 1
+    virtualEntryBar := bar_index
+    virtualEntryPrice := entryLimit
+    virtualEntryRisk := oneR
+    label.new(bar_index, low, "ONAYLI AL\n" + str.tostring(score) + "/100", color = color.rgb(31, 233, 134), textcolor = color.rgb(2, 25, 13), style = label.style_label_up)
+if confirmedSell
+    virtualPosition := false
+    virtualEntryBar := na
+    virtualEntryPrice := na
+    virtualEntryRisk := na
+    label.new(bar_index, high, "ONAYLI SAT", color = color.rgb(255, 77, 104), textcolor = color.white, style = label.style_label_down)
+
+plot(ema9, "EMA 9", color = color.rgb(64, 235, 146), linewidth = 1)
+plot(ema21, "EMA 21", color = color.rgb(255, 202, 88), linewidth = 1)
+plot(ema50, "EMA 50", color = color.rgb(120, 143, 255), linewidth = 2)
+plot(vwap, "VWAP", color = color.white, linewidth = 2)
+plot(virtualPosition ? plannedStop : na, "Planlanan stop", color = color.rgb(255, 71, 100), style = plot.style_linebr)
+plot(virtualPosition ? target1 : na, "Hedef 1", color = color.rgb(73, 230, 142), style = plot.style_linebr)
+plot(virtualPosition ? target2 : na, "Hedef 2", color = color.rgb(34, 175, 107), style = plot.style_linebr)
+bgcolor(not is15Minute ? color.new(color.red, 88) : previewBuy ? color.new(color.lime, 92) : previewSell ? color.new(color.red, 92) : na)
+
+string signalId = syminfo.ticker + "-" + str.tostring(time_close) + (confirmedBuy ? "-LONG" : "-EXIT")
+string isoTime = str.format_time(time_close, "yyyy-MM-dd'T'HH:mm:ssXXX", "Europe/Istanbul")
+string indexJson = indexAvailable ? str.tostring(indexBullish) : "null"
+string sideJson = confirmedBuy ? "BUY" : "SELL"
+string payload = "{\"version\":\"1.0\",\"strategy\":\"finpilot-intraday-v1\",\"signalId\":\"" + signalId + "\",\"nonce\":\"" + signalId + "\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"BIST\",\"timeframe\":\"15\",\"side\":\"" + sideJson + "\",\"signalPrice\":" + str.tostring(close) + ",\"barTime\":\"" + isoTime + "\",\"sentAt\":\"" + isoTime + "\",\"confirmed\":true,\"metrics\":{\"ema9\":" + str.tostring(ema9) + ",\"ema21\":" + str.tostring(ema21) + ",\"ema50\":" + str.tostring(ema50) + ",\"vwap\":" + str.tostring(vwap) + ",\"atr\":" + str.tostring(atr) + ",\"rsi\":" + str.tostring(rsi) + ",\"adx\":" + str.tostring(adx) + ",\"relativeVolume\":" + str.tostring(relativeVolume) + ",\"recentSwingLow\":" + str.tostring(swingLow) + ",\"recentSwingHigh\":" + str.tostring(swingHigh) + ",\"atrPercent\":" + str.tostring(atrPercent) + ",\"averageTurnoverTry\":" + str.tostring(averageTurnover) + ",\"oneHourBullish\":" + str.tostring(hourBullish) + ",\"fourHourBullish\":" + str.tostring(fourHourBullish) + ",\"indexBullish\":" + indexJson + ",\"spreadBps\":null},\"gatewayToken\":\"" + gatewayToken + "\"}"
+
+if (confirmedBuy or confirmedSell) and str.length(gatewayToken) >= 32
+    alert(payload, alert.freq_once_per_bar_close)
+
+alertcondition(confirmedBuy, "FinPilot ONAYLI AL", "FinPilot ONAYLI AL — dinamik JSON için alarm türünde ‘Any alert() function call’ seçin.")
+alertcondition(confirmedSell, "FinPilot ONAYLI SAT", "FinPilot ONAYLI SAT — dinamik JSON için alarm türünde ‘Any alert() function call’ seçin.")
+
+var table dashboard = table.new(position.top_right, 4, 14, bgcolor = color.rgb(5, 24, 17), frame_color = color.rgb(36, 94, 66), frame_width = 1)
+f_cell(int column, int row, string text, color textColor = color.white, color background = color.rgb(5, 24, 17)) =>
+    table.cell(dashboard, column, row, text, text_color = textColor, bgcolor = background, text_size = size.small)
+f_pass(bool condition) => condition ? "✓" : "×"
+f_color(bool condition) => condition ? color.rgb(65, 238, 148) : color.rgb(255, 83, 111)
+
+if barstate.islast
+    color stateColor = str.contains(visibleState, "AL") ? color.rgb(35, 235, 137) : str.contains(visibleState, "SAT") or str.contains(visibleState, "YASAK") ? color.rgb(255, 78, 106) : color.rgb(255, 196, 80)
+    f_cell(0, 0, "FINPILOT v1", color.white, color.rgb(9, 54, 37))
+    f_cell(1, 0, visibleState, stateColor, color.rgb(9, 54, 37))
+    f_cell(2, 0, str.tostring(score) + "/100", stateColor, color.rgb(9, 54, 37))
+    f_cell(3, 0, barstate.isconfirmed ? "KAPANDI" : "ÖN SİNYAL", barstate.isconfirmed ? color.lime : color.orange, color.rgb(9, 54, 37))
+    f_cell(0, 1, "Koşul")
+    f_cell(1, 1, "Sonuç")
+    f_cell(2, 1, "Değer")
+    f_cell(3, 1, "Gereken")
+    f_cell(0, 2, "4 saat trend")
+    f_cell(1, 2, f_pass(fourHourBullish), f_color(fourHourBullish))
+    f_cell(2, 2, fourHourBullish ? "Yükseliş" : "Değil")
+    f_cell(3, 2, "Yükseliş")
+    f_cell(0, 3, "1 saat trend")
+    f_cell(1, 3, f_pass(hourBullish), f_color(hourBullish))
+    f_cell(2, 3, hourBullish ? "Yükseliş" : "Değil")
+    f_cell(3, 3, "Yükseliş")
+    f_cell(0, 4, "VWAP")
+    f_cell(1, 4, f_pass(priceAboveVwap), f_color(priceAboveVwap))
+    f_cell(2, 4, str.tostring(close, format.mintick))
+    f_cell(3, 4, "> " + str.tostring(vwap, format.mintick))
+    f_cell(0, 5, "EMA dizilimi")
+    f_cell(1, 5, f_pass(emaAligned), f_color(emaAligned))
+    f_cell(2, 5, "9/21/50")
+    f_cell(3, 5, "9 > 21 > 50")
+    f_cell(0, 6, "Göreli hacim")
+    f_cell(1, 6, f_pass(volumePass), f_color(volumePass))
+    f_cell(2, 6, str.tostring(relativeVolume, "#.##") + "x")
+    f_cell(3, 6, "≥ 1.15x")
+    f_cell(0, 7, "RSI / ADX")
+    f_cell(1, 7, f_pass(momentumPass and adxPass), f_color(momentumPass and adxPass))
+    f_cell(2, 7, str.tostring(rsi, "#.0") + " / " + str.tostring(adx, "#.0"))
+    f_cell(3, 7, "52–72 / ≥18")
+    f_cell(0, 8, "Oynaklık")
+    f_cell(1, 8, f_pass(atrPass), f_color(atrPass))
+    f_cell(2, 8, "%" + str.tostring(atrPercent, "#.##"))
+    f_cell(3, 8, "%0.35–4")
+    f_cell(0, 9, "Limit / adet")
+    f_cell(1, 9, str.tostring(entryLimit, format.mintick))
+    f_cell(2, 9, str.tostring(quantity))
+    f_cell(3, 9, "Risk %0.50")
+    f_cell(0, 10, "Stop")
+    f_cell(1, 10, str.tostring(plannedStop, format.mintick), color.rgb(255, 102, 126))
+    f_cell(2, 10, "Hedef 1")
+    f_cell(3, 10, str.tostring(target1, format.mintick), color.rgb(65, 238, 148))
+    f_cell(0, 11, "Hedef 2")
+    f_cell(1, 11, str.tostring(target2, format.mintick), color.rgb(65, 238, 148))
+    f_cell(2, 11, "Masraf son. R/R")
+    f_cell(3, 11, str.tostring(expectedRR, "#.##") + "R")
+    f_cell(0, 12, "1dk/5dk kullanılmaz", color.orange)
+    f_cell(1, 12, is15Minute ? "15dk doğru" : "15dk'ya geç", f_color(is15Minute))
+    f_cell(2, 12, "Üst zaman")
+    f_cell(3, 12, "Yalnız kapanmış")
+    f_cell(0, 13, "Kâr garantisi yok", color.orange)
+    f_cell(1, 13, "Ön sinyal değişir", color.orange)
+    f_cell(2, 13, "Onay kapanışta")
+    f_cell(3, 13, "Emir backend'de")

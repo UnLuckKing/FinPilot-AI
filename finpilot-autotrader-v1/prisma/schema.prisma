@@ -1,0 +1,202 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model UserConfiguration {
+  id               String   @id @default("singleton")
+  tradingMode      String   @default("PAPER")
+  capitalTry       Float    @default(100000)
+  selectedBroker   String   @default("PAPER")
+  watchlistJson    String   @default("[]")
+  killSwitchActive Boolean  @default(false)
+  liveEnabled      Boolean  @default(false)
+  updatedAt        DateTime @updatedAt
+}
+
+model StrategyVersion {
+  id         String   @id @default(cuid())
+  version    String   @unique
+  configJson String
+  active     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model Symbol {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  exchange          String   @default("BIST")
+  enabled           Boolean  @default(true)
+  restricted        Boolean  @default(false)
+  restrictionReason String?
+  restrictionExpiry DateTime?
+  updatedAt         DateTime @updatedAt
+}
+
+model Signal {
+  id             String   @id @default(cuid())
+  signalId       String   @unique
+  symbol         String
+  side           String
+  score          Int
+  tier           String
+  state          String
+  reason         String
+  planJson       String?
+  conditionsJson String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([symbol, createdAt])
+}
+
+model Order {
+  id               String   @id @default(cuid())
+  clientOrderId    String   @unique
+  brokerOrderId    String?  @unique
+  signalId         String
+  symbol           String
+  side             String
+  type             String
+  quantity         Int
+  filledQuantity   Int      @default(0)
+  limitPrice       Float?
+  stopPrice        Float?
+  averageFillPrice Float?
+  status           String
+  purpose          String   @default("ENTRY")
+  rawResponseJson  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([signalId])
+  @@index([symbol, status])
+}
+
+model Execution {
+  id            String   @id @default(cuid())
+  executionId   String   @unique
+  brokerOrderId String
+  symbol        String
+  side          String
+  quantity      Int
+  price         Float
+  commission    Float
+  executedAt    DateTime
+
+  @@index([brokerOrderId])
+}
+
+model Position {
+  id               String   @id @default(cuid())
+  symbol           String   @unique
+  quantity         Int
+  averagePrice     Float
+  lastPrice        Float
+  stopPrice        Float?
+  target1          Float?
+  target2          Float?
+  target1Completed Boolean  @default(false)
+  protectionState  String   @default("UNVERIFIED")
+  openedAt         DateTime
+  updatedAt        DateTime @updatedAt
+}
+
+model ProtectionOrder {
+  id            String   @id @default(cuid())
+  positionId    String
+  brokerOrderId String?
+  kind          String
+  price         Float
+  quantity      Int
+  status        String
+  native        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([positionId, status])
+}
+
+model Trade {
+  id            String   @id @default(cuid())
+  signalId      String   @unique
+  symbol        String
+  entryPrice    Float
+  exitPrice     Float?
+  quantity      Int
+  grossPnl      Float    @default(0)
+  netPnl        Float    @default(0)
+  resultR       Float?
+  openedAt      DateTime
+  closedAt      DateTime?
+  closeReason   String?
+  strategy      String
+  createdAt     DateTime @default(now())
+
+  @@index([symbol, openedAt])
+}
+
+model DailyRiskState {
+  id                 String   @id @default(cuid())
+  date               String   @unique
+  openingCapital     Float
+  realisedPnl        Float    @default(0)
+  unrealisedPnl      Float    @default(0)
+  consecutiveLosses  Int      @default(0)
+  completedTrades    Int      @default(0)
+  state              String   @default("NORMAL")
+  lockedReason       String?
+  reconciled         Boolean  @default(false)
+  updatedAt          DateTime @updatedAt
+}
+
+model BrokerConnection {
+  id                      String   @id @default(cuid())
+  adapter                 String   @unique
+  status                  String
+  reconciliationLevel     String
+  encryptedConfiguration  String?
+  lastConnectedAt         DateTime?
+  lastReconciledAt        DateTime?
+  updatedAt               DateTime @updatedAt
+}
+
+model WebhookEvent {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  nonce          String   @unique
+  signalId       String
+  payloadJson    String
+  status         String   @default("PENDING")
+  attemptCount   Int      @default(0)
+  error          String?
+  receivedAt     DateTime @default(now())
+  processedAt    DateTime?
+
+  @@index([status, receivedAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actor       String
+  action      String
+  entityType  String
+  entityId    String?
+  detailsJson String
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model SystemHealth {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  state     String
+  detail    String
+  checkedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
