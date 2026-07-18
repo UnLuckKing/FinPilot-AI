@@ -1,0 +1,10 @@
+{
+  "market": "BIST",
+  "timezone": "Europe/Istanbul",
+  "regularSession": { "open": "10:00", "close": "18:00" },
+  "newEntryCutoff": "17:15",
+  "forcedExit": "17:45",
+  "holidays": [],
+  "lastReviewed": "2026-07-17",
+  "sourceNote": "İşlem saatleri değişebileceği için canlıya geçmeden önce Borsa İstanbul resmî takvimiyle güncelleyin."
+}

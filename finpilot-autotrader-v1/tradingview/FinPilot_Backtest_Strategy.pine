@@ -1,0 +1,212 @@
+//@version=6
+strategy("FinPilot AutoTrader v1 — Kapanmış Mum Backtest", overlay = true, initial_capital = 100000, currency = currency.TRY, pyramiding = 0, calc_on_every_tick = false, calc_on_order_fills = true, process_orders_on_close = false, commission_type = strategy.commission.percent, commission_value = 0.10, slippage = 2, use_bar_magnifier = true, margin_long = 100, margin_short = 100)
+
+inSampleStart = input.time(timestamp(2022, 1, 1, 0, 0), "Eğitim başlangıcı", group = "Dönemler")
+inSampleEnd = input.time(timestamp(2024, 12, 31, 23, 59), "Eğitim bitişi", group = "Dönemler")
+outSampleStart = input.time(timestamp(2025, 1, 1, 0, 0), "Dönem dışı başlangıcı", group = "Dönemler")
+outSampleEnd = input.time(timestamp(2028, 12, 31, 23, 59), "Dönem dışı bitişi", group = "Dönemler")
+sessionInput = input.session("1000-1800", "BIST normal seans", group = "Seans")
+indexSymbol = input.symbol("BIST:XU100", "Piyasa endeksi", group = "Seans")
+
+float riskFraction = 0.005
+float maxPositionFraction = 0.30
+float dailyLossFraction = 0.015
+int maxTradesPerDay = 3
+int maxBarsWithoutProgress = 6
+
+bool is15Minute = timeframe.isminutes and timeframe.multiplier == 15
+bool inSession = not na(time(timeframe.period, sessionInput, "Europe/Istanbul"))
+int localHour = hour(time, "Europe/Istanbul")
+int localMinute = minute(time, "Europe/Istanbul")
+bool beforeEntryCutoff = localHour < 17 or (localHour == 17 and localMinute < 15)
+bool forceExit = localHour > 17 or (localHour == 17 and localMinute >= 45)
+bool inSample = time >= inSampleStart and time <= inSampleEnd
+bool outSample = time >= outSampleStart and time <= outSampleEnd
+bool validationPeriod = inSample or outSample
+
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema50 = ta.ema(close, 50)
+float vwap = ta.vwap(hlc3)
+float atr = ta.atr(14)
+float rsi = ta.rsi(close, 14)
+[plusDi, minusDi, adx] = ta.dmi(14, 14)
+float averageVolume = ta.sma(volume, 20)
+float relativeVolume = averageVolume > 0 ? volume / averageVolume : 0.0
+float averageTurnover = ta.sma(close * volume, 20)
+float swingLow = ta.lowest(low, 10)
+float atrPercent = close > 0 ? atr / close * 100 : 0.0
+float vwapDistanceAtr = atr > 0 ? math.abs(close - vwap) / atr : 999.0
+[hourClose, hourEma50] = request.security(syminfo.tickerid, "60", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on)
+[fourHourClose, fourHourEma50] = request.security(syminfo.tickerid, "240", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on)
+[indexClose, indexEma50] = request.security(indexSymbol, "60", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+bool hourBullish = hourClose > hourEma50
+bool fourHourBullish = fourHourClose > fourHourEma50
+bool indexBullish = na(indexClose) or na(indexEma50) or indexClose > indexEma50
+bool priceAboveVwap = close > vwap
+bool emaAligned = ema9 > ema21 and ema21 > ema50
+bool notExtended = vwapDistanceAtr <= 1.25
+bool volumePass = relativeVolume >= 1.15
+bool momentumPass = rsi >= 52 and rsi <= 72
+bool adxPass = adx >= 18 and plusDi > minusDi
+bool atrPass = atrPercent >= 0.35 and atrPercent <= 4
+bool liquidityPass = averageTurnover >= 10000000
+
+int score = 0
+score += fourHourBullish ? 14 : 0
+score += hourBullish ? 12 : 0
+score += priceAboveVwap ? 10 : 0
+score += emaAligned ? 13 : 0
+score += notExtended ? 8 : 0
+score += volumePass ? 11 : 0
+score += momentumPass ? 8 : 0
+score += adxPass ? 7 : 0
+score += atrPass ? 6 : 0
+score += liquidityPass ? 6 : 0
+score += indexBullish ? 5 : 0
+bool hardGates = fourHourBullish and hourBullish and priceAboveVwap and atr > 0
+
+var int consecutiveLosses = 0
+var int observedClosedTrades = 0
+var int tradesToday = 0
+var float dayStartNetProfit = 0.0
+var int pendingSignalBar = na
+var float plannedStop = na
+var float plannedTarget1 = na
+var float plannedTarget2 = na
+var float originalRisk = na
+var int entryBar = na
+var bool target1Touched = false
+var float activeStop = na
+bool newDay = ta.change(time("D")) != 0
+if newDay
+    tradesToday := 0
+    dayStartNetProfit := strategy.netprofit
+    consecutiveLosses := 0
+
+if strategy.closedtrades > observedClosedTrades
+    float lastProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    consecutiveLosses := lastProfit < 0 ? consecutiveLosses + 1 : 0
+    tradesToday += 1
+    observedClosedTrades := strategy.closedtrades
+
+float dailyPnl = strategy.netprofit - dayStartNetProfit
+bool dailyLossLock = dailyPnl <= -strategy.equity * dailyLossFraction
+bool dayLocked = consecutiveLosses >= 3 or tradesToday >= maxTradesPerDay or dailyLossLock
+float lossMultiplier = consecutiveLosses == 1 ? 0.70 : consecutiveLosses == 2 ? 0.50 : consecutiveLosses >= 3 ? 0.0 : 1.0
+bool qualityPass = consecutiveLosses < 2 or score >= 86
+
+float entryLimit = math.round_to_mintick(close * 0.9996)
+float stopCandidate = math.round_to_mintick(math.min(entryLimit - atr * 1.25, swingLow - atr * 0.15))
+float oneR = entryLimit - stopCandidate
+float riskBudget = strategy.equity * riskFraction * lossMultiplier
+float estimatedCostPerShare = entryLimit * 0.0036
+float riskPerShare = oneR + estimatedCostPerShare
+int quantityByRisk = riskPerShare > 0 ? int(math.floor(riskBudget / riskPerShare)) : 0
+int quantityByCap = entryLimit > 0 ? int(math.floor(strategy.equity * maxPositionFraction / entryLimit)) : 0
+int quantity = math.max(0, math.min(quantityByRisk, quantityByCap))
+float expectedRR = riskPerShare > 0 ? (oneR * 1.5 - estimatedCostPerShare) / riskPerShare : 0.0
+bool setup = barstate.isconfirmed and is15Minute and validationPeriod and inSession and beforeEntryCutoff and not dayLocked and qualityPass and score >= 72 and hardGates and quantity > 0 and oneR > 0 and expectedRR >= 1.35
+
+if setup and strategy.position_size == 0 and na(pendingSignalBar)
+    plannedStop := stopCandidate
+    plannedTarget1 := math.round_to_mintick(entryLimit + oneR)
+    plannedTarget2 := math.round_to_mintick(entryLimit + oneR * 2)
+    originalRisk := oneR
+    pendingSignalBar := bar_index
+    strategy.entry("Long", strategy.long, qty = quantity, limit = entryLimit)
+
+if not na(pendingSignalBar) and strategy.position_size == 0 and bar_index > pendingSignalBar + 1
+    strategy.cancel("Long")
+    pendingSignalBar := na
+
+bool justFilled = strategy.position_size > 0 and strategy.position_size[1] == 0
+if justFilled
+    entryBar := bar_index
+    activeStop := plannedStop
+    target1Touched := false
+    pendingSignalBar := na
+
+if strategy.position_size > 0
+    if not target1Touched and high >= plannedTarget1
+        target1Touched := true
+        activeStop := math.max(activeStop, math.round_to_mintick(strategy.position_avg_price * 1.0012))
+    if target1Touched and high >= strategy.position_avg_price + originalRisk * 1.5
+        activeStop := math.max(activeStop, math.round_to_mintick(close - atr * 1.5))
+    strategy.exit("Hedef 1", "Long", qty_percent = 50, limit = plannedTarget1, stop = activeStop)
+    strategy.exit("Hedef 2", "Long", qty_percent = 50, limit = plannedTarget2, stop = activeStop)
+    bool noProgress = not na(entryBar) and bar_index - entryBar >= maxBarsWithoutProgress and close < strategy.position_avg_price + originalRisk * 0.25
+    bool signalExit = close < ema21 or close < vwap or rsi < 45
+    if noProgress
+        strategy.close("Long", comment = "Zaman çıkışı")
+    else if signalExit
+        strategy.close("Long", comment = "Onaylı satış")
+    else if forceExit
+        strategy.close("Long", comment = "Seans sonu")
+
+if strategy.position_size == 0 and strategy.position_size[1] > 0
+    plannedStop := na
+    plannedTarget1 := na
+    plannedTarget2 := na
+    originalRisk := na
+    activeStop := na
+    entryBar := na
+    target1Touched := false
+
+// Aylık sonuç arşivi: son 12 tamamlanmış ay.
+var array<string> monthLabels = array.new_string()
+var array<float> monthResults = array.new_float()
+var float monthStartNet = 0.0
+bool newMonth = ta.change(time("M")) != 0
+if newMonth
+    string previousMonth = str.format_time(time[1], "yyyy-MM", "Europe/Istanbul")
+    array.push(monthLabels, previousMonth)
+    array.push(monthResults, strategy.netprofit[1] - monthStartNet)
+    if array.size(monthLabels) > 12
+        array.shift(monthLabels)
+        array.shift(monthResults)
+    monthStartNet := strategy.netprofit[1]
+
+float profitFactor = strategy.grossloss > 0 ? strategy.grossprofit / strategy.grossloss : na
+float winRate = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100 : na
+float averageWin = strategy.wintrades > 0 ? strategy.grossprofit / strategy.wintrades : 0.0
+float averageLoss = strategy.losstrades > 0 ? strategy.grossloss / strategy.losstrades : 0.0
+float expectancy = strategy.closedtrades > 0 ? (winRate / 100) * averageWin - (1 - winRate / 100) * averageLoss : 0.0
+
+plot(ema9, "EMA 9", color = color.rgb(53, 227, 137))
+plot(ema21, "EMA 21", color = color.rgb(255, 197, 78))
+plot(ema50, "EMA 50", color = color.rgb(113, 137, 255), linewidth = 2)
+plot(vwap, "VWAP", color = color.white, linewidth = 2)
+plot(strategy.position_size > 0 ? activeStop : na, "Aktif stop", color = color.rgb(255, 73, 104), style = plot.style_linebr, linewidth = 2)
+plot(strategy.position_size > 0 ? plannedTarget1 : na, "Hedef 1", color = color.rgb(72, 231, 142), style = plot.style_linebr)
+plot(strategy.position_size > 0 ? plannedTarget2 : na, "Hedef 2", color = color.rgb(34, 169, 105), style = plot.style_linebr)
+bgcolor(inSample ? color.new(color.blue, 94) : outSample ? color.new(color.green, 94) : color.new(color.gray, 96))
+
+var table metrics = table.new(position.top_right, 2, 16, bgcolor = color.rgb(5, 24, 17), frame_color = color.rgb(34, 91, 64), frame_width = 1)
+f_row(int row, string label, string value, color valueColor = color.white) =>
+    table.cell(metrics, 0, row, label, text_color = color.rgb(111, 158, 135), text_size = size.small)
+    table.cell(metrics, 1, row, value, text_color = valueColor, text_size = size.small)
+
+if barstate.islast
+    table.cell(metrics, 0, 0, "FINPILOT BACKTEST", text_color = color.white, bgcolor = color.rgb(10, 58, 40))
+    table.cell(metrics, 1, 0, is15Minute ? "15 DK / KAPANMIŞ" : "15 DK'YA GEÇ", text_color = is15Minute ? color.lime : color.red, bgcolor = color.rgb(10, 58, 40))
+    f_row(1, "Dönem", inSample ? "Eğitim" : outSample ? "Dönem dışı" : "Dışarıda")
+    f_row(2, "Kapalı işlem", str.tostring(strategy.closedtrades))
+    f_row(3, "Kazanma", na(winRate) ? "—" : "%" + str.tostring(winRate, "#.0"))
+    f_row(4, "Kâr faktörü", na(profitFactor) ? "—" : str.tostring(profitFactor, "#.##"))
+    f_row(5, "Ort. kazanç", str.tostring(averageWin, "#.##") + " ₺")
+    f_row(6, "Ort. kayıp", str.tostring(averageLoss, "#.##") + " ₺")
+    f_row(7, "Beklenti/işlem", str.tostring(expectancy, "#.##") + " ₺", expectancy >= 0 ? color.lime : color.red)
+    f_row(8, "Net kâr", str.tostring(strategy.netprofit, "#.##") + " ₺", strategy.netprofit >= 0 ? color.lime : color.red)
+    f_row(9, "Azami düşüş", str.tostring(strategy.max_drawdown, "#.##") + " ₺")
+    f_row(10, "Ardışık kayıp", str.tostring(consecutiveLosses))
+    f_row(11, "Bugün işlem", str.tostring(tradesToday) + "/" + str.tostring(maxTradesPerDay))
+    f_row(12, "Risk çarpanı", "%" + str.tostring(lossMultiplier * 100, "#.0"))
+    f_row(13, "Gün kilidi", dayLocked ? "ETKİN" : "AÇIK", dayLocked ? color.red : color.lime)
+    string monthText = "Henüz yok"
+    if array.size(monthLabels) > 0
+        int lastIndex = array.size(monthLabels) - 1
+        monthText := array.get(monthLabels, lastIndex) + " " + str.tostring(array.get(monthResults, lastIndex), "#.##") + "₺"
+    f_row(14, "Son tamamlanan ay", monthText)
+    f_row(15, "Model", "İleri veri yok / tick yok", color.orange)

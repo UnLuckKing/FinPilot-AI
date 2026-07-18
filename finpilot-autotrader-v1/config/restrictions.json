@@ -1,0 +1,7 @@
+{
+  "updatedAt": "2026-07-17T00:00:00.000+03:00",
+  "expiresAt": "2026-07-18T23:59:59.000+03:00",
+  "blockedSymbols": [],
+  "reasons": {},
+  "failClosedWhenStale": true
+}

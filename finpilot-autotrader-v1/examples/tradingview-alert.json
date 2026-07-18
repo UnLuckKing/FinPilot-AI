@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "strategy": "finpilot-intraday-v1",
+  "signalId": "ASELS-1784282400000-LONG",
+  "nonce": "ASELS-1784282400000-LONG",
+  "symbol": "ASELS",
+  "exchange": "BIST",
+  "timeframe": "15",
+  "side": "BUY",
+  "signalPrice": 100.5,
+  "barTime": "2026-07-17T13:00:00+03:00",
+  "sentAt": "2026-07-17T13:00:00+03:00",
+  "confirmed": true,
+  "metrics": {
+    "ema9": 100.2,
+    "ema21": 99.8,
+    "ema50": 98.4,
+    "vwap": 99.9,
+    "atr": 1.8,
+    "rsi": 61,
+    "adx": 24,
+    "relativeVolume": 1.6,
+    "recentSwingLow": 97.7,
+    "recentSwingHigh": 101,
+    "atrPercent": 1.79,
+    "averageTurnoverTry": 65000000,
+    "oneHourBullish": true,
+    "fourHourBullish": true,
+    "indexBullish": true,
+    "spreadBps": null
+  },
+  "gatewayToken": "REPLACE_WITH_32_CHAR_TV_WEBHOOK_SECRET"
+}
