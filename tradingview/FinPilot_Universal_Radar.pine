@@ -1,0 +1,225 @@
+//@version=6
+indicator("FinPilot Universal Radar v2", overlay = false, max_labels_count = 100)
+
+// Pine Screener için tasarlanmıştır. Tarama zaman dilimini TradingView'de 15 dakika seçin.
+webhookKey = input.string("", "Webhook anahtarı", group = "Bağlantı", display = display.none)
+
+bool is15Minute = timeframe.isminutes and timeframe.multiplier == 15
+bool isStock = syminfo.type == "stock"
+bool isEtf = syminfo.type == "fund"
+bool isCrypto = syminfo.type == "crypto"
+bool isForex = syminfo.type == "forex"
+bool isFutures = syminfo.type == "futures"
+bool isIndex = syminfo.type == "index"
+bool isCfd = syminfo.type == "cfd"
+bool isBond = syminfo.type == "bond"
+bool isOption = syminfo.type == "option"
+bool volumeRequired = isStock or isEtf or isCrypto or isFutures
+string marketType = isStock ? "STOCK" : isEtf ? "ETF" : isCrypto ? "CRYPTO" : isForex ? "FOREX" : isFutures ? "FUTURES" : isIndex ? "INDEX" : isCfd ? "COMMODITY" : isBond ? "BOND" : isOption ? "OPTION" : "OTHER"
+
+float ema9 = ta.ema(close, 9)
+float ema21 = ta.ema(close, 21)
+float ema50 = ta.ema(close, 50)
+float vwapRaw = ta.vwap(hlc3)
+float vwap = na(vwapRaw) ? ema21 : vwapRaw
+float atr = ta.atr(14)
+float rsi = ta.rsi(close, 14)
+[plusDi, minusDi, adx] = ta.dmi(14, 14)
+[macdLine, signalLine, macdHistogram] = ta.macd(close, 12, 26, 9)
+float averageVolume = ta.sma(volume, 20)
+bool volumeAvailable = not na(volume) and volume > 0 and not na(averageVolume) and averageVolume > 0
+float relativeVolume = volumeAvailable ? volume / averageVolume : 0.0
+float previousHigh = ta.highest(high[1], 20)
+float swingLow = ta.lowest(low, 10)
+float atrPercent = close > 0 ? atr / close * 100 : 0.0
+float distanceVwapAtr = atr > 0 ? math.abs(close - vwap) / atr : 99.0
+
+// Pine Screener en fazla beş request.* çağrısına izin verir. Her bağlam tek tuple çağrısında paketlenir.
+[hourClose, hourEma50] = request.security(syminfo.tickerid, "60", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on)
+[fourHourClose, fourHourEma50] = request.security(syminfo.tickerid, "240", [close[1], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on)
+[dayClose, dayEma50, dayEma20] = request.security(syminfo.tickerid, "1D", [close[1], ta.ema(close, 50)[1], ta.ema(close, 20)[1]], lookahead = barmerge.lookahead_on)
+[weekClose, weekEma20] = request.security(syminfo.tickerid, "1W", [close[1], ta.ema(close, 20)[1]], lookahead = barmerge.lookahead_on)
+string benchmarkSymbol = syminfo.prefix == "BIST" ? "BIST:XU100" : isCrypto ? "CRYPTOCAP:TOTAL" : isForex ? "TVC:DXY" : "AMEX:SPY"
+[benchmarkClose, benchmarkClose20, benchmarkEma50] = request.security(benchmarkSymbol, timeframe.period, [close[1], close[21], ta.ema(close, 50)[1]], lookahead = barmerge.lookahead_on, ignore_invalid_symbol = true)
+
+bool hourKnown = not na(hourClose) and not na(hourEma50)
+bool fourHourKnown = not na(fourHourClose) and not na(fourHourEma50)
+bool dayKnown = not na(dayClose) and not na(dayEma50)
+bool weekKnown = not na(weekClose) and not na(weekEma20)
+bool benchmarkKnown = not na(benchmarkClose) and not na(benchmarkEma50)
+bool hourBullish = hourKnown and hourClose > hourEma50
+bool fourHourBullish = fourHourKnown and fourHourClose > fourHourEma50
+bool dailyBullish = dayKnown and dayClose > dayEma50 and dayEma20 >= dayEma50
+bool weeklyBullish = weekKnown and weekClose > weekEma20
+bool dailyBearish = dayKnown and dayClose < dayEma50
+bool weeklyBearish = weekKnown and weekClose < weekEma20
+bool benchmarkBullish = not benchmarkKnown or benchmarkClose > benchmarkEma50
+float symbolReturn20 = close[20] > 0 ? close / close[20] - 1 : 0.0
+float benchmarkReturn20 = benchmarkKnown and benchmarkClose20 > 0 ? benchmarkClose / benchmarkClose20 - 1 : 0.0
+float relativeStrength20 = symbolReturn20 - benchmarkReturn20
+
+float minimumRelativeVolume = isCrypto ? 1.05 : isFutures or isEtf ? 1.0 : 1.10
+float minimumAdx = isCrypto or isForex ? 20.0 : isFutures ? 19.0 : 18.0
+float minimumAtrPercent = isForex ? 0.08 : isCrypto ? 0.35 : isIndex ? 0.10 : 0.20
+float maximumAtrPercent = isCrypto ? 8.0 : isForex ? 3.0 : 6.0
+
+bool emaAligned = ema9 > ema21 and ema21 > ema50
+bool aboveVwap = close > vwap
+bool volumePass = not volumeRequired or (volumeAvailable and relativeVolume >= minimumRelativeVolume)
+bool volatilityPass = atrPercent >= minimumAtrPercent and atrPercent <= maximumAtrPercent
+bool momentumPass = rsi >= 50 and rsi <= 72 and adx >= minimumAdx and macdHistogram >= 0 and plusDi >= minusDi
+bool overextended = distanceVwapAtr > 1.45 or rsi > 74
+
+bool trendPullback = hourBullish and fourHourBullish and emaAligned and aboveVwap and distanceVwapAtr <= 0.90 and rsi >= 50 and rsi <= 69 and low <= ema21 + atr * 0.30
+bool breakout = hourBullish and fourHourBullish and close > previousHigh and relativeVolume >= math.max(1.35, minimumRelativeVolume) and adx >= math.max(20.0, minimumAdx)
+bool retest = hourBullish and close > previousHigh and low <= previousHigh + atr * 0.18 and close >= open
+bool relativeLeader = hourBullish and fourHourBullish and benchmarkBullish and relativeStrength20 > 0.015 and aboveVwap and not overextended
+bool hasSetup = trendPullback or breakout or retest or relativeLeader
+string setupName = retest ? "Kırılım yeniden testi" : breakout ? "Hacimli kırılım" : trendPullback ? "Trend geri çekilmesi" : relativeLeader ? "Göreli güçlü lider" : "Kurulum yok"
+int setupCode = retest ? 3 : breakout ? 2 : trendPullback ? 1 : relativeLeader ? 4 : 0
+
+int score = 0
+score += emaAligned ? 10 : 0
+score += hourBullish ? 9 : 0
+score += fourHourBullish ? 10 : 0
+score += dailyBullish ? 7 : 0
+score += weeklyBullish ? 4 : 0
+score += aboveVwap ? 9 : 0
+score += not overextended ? 8 : 0
+score += momentumPass ? 10 : 0
+score += volumePass ? 9 : 0
+score += volatilityPass ? 7 : 0
+score += benchmarkBullish ? 6 : 0
+score += hasSetup ? 11 : 0
+
+int ageSeconds = int(math.max(0, (timenow - time_close) / 1000))
+bool fresh = not session.ismarket or ageSeconds <= 6 * 60
+bool enoughHistory = bar_index >= 220
+int dataHealth = 100
+dataHealth -= barstate.isconfirmed ? 0 : 35
+dataHealth -= fresh ? 0 : 40
+dataHealth -= atr > 0 and close > 0 ? 0 : 70
+dataHealth -= enoughHistory ? 0 : 30
+dataHealth -= volumeRequired and not volumeAvailable ? 30 : 0
+dataHealth -= hourKnown ? 0 : 8
+dataHealth -= fourHourKnown ? 0 : 8
+dataHealth := math.max(0, math.min(100, dataHealth))
+
+float entryMid = breakout or retest ? previousHigh : math.max(vwap, ema21)
+entryMid := na(entryMid) or entryMid <= 0 ? close : entryMid
+float entryLow = entryMid - atr * 0.16
+float entryHigh = entryMid + atr * 0.18
+float atrStop = entryMid - atr * 1.30
+float structureStop = swingLow > 0 and swingLow < entryMid ? swingLow - atr * 0.12 : atrStop
+float rawStopDistance = entryMid - math.min(atrStop, structureStop)
+float stopDistance = math.max(atr * 0.85, math.min(atr * 2.20, rawStopDistance))
+float stopPrice = entryMid - stopDistance
+float target1 = entryMid + stopDistance * 1.50
+float target2 = entryMid + stopDistance * 2.50
+float maximumChase = entryHigh + atr * 0.28
+float currentEntry = math.max(close, entryMid)
+float effectiveRewardRisk = currentEntry > stopPrice ? (target2 - currentEntry) / (currentEntry - stopPrice) : 0.0
+bool currentEntryValid = close >= entryLow and close <= maximumChase
+bool hardBearish = not hourBullish and not fourHourBullish and not dailyBullish
+
+int verdictCode = -1
+if isOption
+    verdictCode := -1
+else if dataHealth < 45
+    verdictCode := -1
+else if hardBearish or not volatilityPass or score < 52
+    verdictCode := 0
+else if overextended or not currentEntryValid or (not hasSetup and score >= 58)
+    verdictCode := 1
+else if score >= 84 and dataHealth >= 85 and hasSetup and effectiveRewardRisk >= 1.80 and hourBullish and fourHourBullish and dailyBullish and volumePass and barstate.isconfirmed and fresh
+    verdictCode := 3
+else if score >= 68 and dataHealth >= 60 and hasSetup and effectiveRewardRisk >= 1.45 and hourBullish and barstate.isconfirmed and fresh
+    verdictCode := 2
+else
+    verdictCode := score >= 58 and not hardBearish ? 1 : 0
+
+string verdict = verdictCode == 3 ? "YATIR" : verdictCode == 2 ? "YATIRILABİLİR — SEN BİLİRSİN" : verdictCode == 1 ? "BEKLE" : verdictCode == 0 ? "YATIRMA" : "VERİ YETERSİZ"
+string intradayDirection = emaAligned and aboveVwap ? "YÜKSELİŞ" : hardBearish ? "DÜŞÜŞ" : "YATAY"
+string dayDirection = dailyBullish ? "YÜKSELİŞ" : dailyBearish ? "DÜŞÜŞ" : "YATAY"
+string weekDirection = weeklyBullish ? "YÜKSELİŞ" : weeklyBearish ? "DÜŞÜŞ" : "YATAY"
+
+// Pine Screener sütunları. Karar: 3 YATIR, 2 YATIRILABİLİR, 1 BEKLE, 0 YATIRMA, -1 VERİ YETERSİZ.
+plot(verdictCode, "Karar", color = verdictCode == 3 ? color.lime : verdictCode == 2 ? color.rgb(190, 255, 80) : verdictCode == 1 ? color.orange : color.red, linewidth = 2)
+plot(score, "Teknik puan", color = color.rgb(69, 234, 145))
+plot(dataHealth, "Veri sağlığı", color = color.rgb(91, 170, 255))
+plot(setupCode, "Kurulum kodu", color = color.rgb(194, 132, 255))
+plot(effectiveRewardRisk, "Güncel R/R", color = color.rgb(255, 207, 92))
+plot(entryLow, "Giriş alt", color = color.rgb(90, 205, 138))
+plot(entryHigh, "Giriş üst", color = color.rgb(90, 205, 138))
+plot(maximumChase, "Kovalama sınırı", color = color.orange)
+plot(stopPrice, "Stop", color = color.rgb(255, 82, 112))
+plot(target1, "Hedef 1", color = color.rgb(68, 230, 139))
+plot(target2, "Hedef 2", color = color.rgb(33, 174, 102))
+
+bool newStrongDecision = is15Minute and barstate.isconfirmed and verdictCode >= 2 and (nz(verdictCode[1], -1) < 2 or verdictCode != verdictCode[1])
+alertcondition(newStrongDecision and verdictCode == 3, "FinPilot YATIR", "FinPilot güçlü YATIR analizi oluştu")
+alertcondition(newStrongDecision and verdictCode == 2, "FinPilot YATIRILABİLİR", "FinPilot YATIRILABİLİR — SEN BİLİRSİN analizi oluştu")
+alertcondition(barstate.isconfirmed and verdictCode == 0 and nz(verdictCode[1], 0) > 0, "FinPilot YATIRMA", "FinPilot analiz yapısı bozuldu")
+
+string signalId = syminfo.prefix + "-" + syminfo.ticker + "-" + str.tostring(time_close)
+string isoTime = str.format_time(time_close, "yyyy-MM-dd'T'HH:mm:ssXXX", "UTC")
+string payload = "{\"version\":\"2.0\",\"event\":\"ANALYSIS\",\"signalId\":\"" + signalId + "\",\"nonce\":\"" + signalId + "\",\"symbol\":\"" + syminfo.ticker + "\",\"exchange\":\"" + syminfo.prefix + "\",\"marketType\":\"" + marketType + "\",\"timeframe\":\"15\",\"barTime\":\"" + isoTime + "\",\"sentAt\":\"" + isoTime + "\",\"confirmed\":true,\"data\":{\"fresh\":" + str.tostring(fresh) + ",\"volumeAvailable\":" + str.tostring(volumeAvailable) + ",\"enoughHistory\":" + str.tostring(enoughHistory) + "},\"metrics\":{\"price\":" + str.tostring(close) + ",\"open\":" + str.tostring(open) + ",\"high\":" + str.tostring(high) + ",\"low\":" + str.tostring(low) + ",\"volume\":" + str.tostring(nz(volume)) + ",\"averageVolume\":" + str.tostring(nz(averageVolume)) + ",\"ema9\":" + str.tostring(ema9) + ",\"ema21\":" + str.tostring(ema21) + ",\"ema50\":" + str.tostring(ema50) + ",\"vwap\":" + str.tostring(vwap) + ",\"atr\":" + str.tostring(atr) + ",\"atrPercent\":" + str.tostring(atrPercent) + ",\"rsi\":" + str.tostring(rsi) + ",\"adx\":" + str.tostring(adx) + ",\"macdHistogram\":" + str.tostring(macdHistogram) + ",\"relativeVolume\":" + str.tostring(relativeVolume) + ",\"previousHigh\":" + str.tostring(previousHigh) + ",\"swingLow\":" + str.tostring(swingLow) + ",\"relativeStrength20\":" + str.tostring(relativeStrength20) + ",\"hourBullish\":" + str.tostring(hourBullish) + ",\"fourHourBullish\":" + str.tostring(fourHourBullish) + ",\"dailyBullish\":" + str.tostring(dailyBullish) + ",\"weeklyBullish\":" + str.tostring(weeklyBullish) + ",\"dailyBearish\":" + str.tostring(dailyBearish) + ",\"weeklyBearish\":" + str.tostring(weeklyBearish) + ",\"benchmarkBullish\":" + str.tostring(benchmarkBullish) + "},\"webhookKey\":\"" + webhookKey + "\"}"
+
+// Her güçlü analizi, kullanıcının alım yapıp yapmadığından bağımsız olarak ileriye dönük kanıt amacıyla izler.
+// Aynı mumda hem stop hem hedef görülürse iyimser varsayım yapılmaz; STOP önce değerlendirilir.
+var bool evidenceActive = false
+var string evidenceSignalId = ""
+var float evidenceStop = na
+var float evidenceTarget1 = na
+var float evidenceTarget2 = na
+var int evidenceStartBar = na
+string outcomeResult = ""
+if barstate.isconfirmed and evidenceActive and bar_index > evidenceStartBar
+    if low <= evidenceStop
+        outcomeResult := "STOP"
+    else if high >= evidenceTarget2
+        outcomeResult := "TARGET2"
+    else if high >= evidenceTarget1
+        outcomeResult := "TARGET1"
+    else if bar_index - evidenceStartBar >= 20
+        outcomeResult := "EXPIRED"
+
+if str.length(outcomeResult) > 0
+    string outcomeNonce = evidenceSignalId + "-" + outcomeResult
+    string outcomePayload = "{\"event\":\"OUTCOME\",\"signalId\":\"" + evidenceSignalId + "\",\"nonce\":\"" + outcomeNonce + "\",\"result\":\"" + outcomeResult + "\",\"observedAt\":\"" + isoTime + "\",\"webhookKey\":\"" + webhookKey + "\"}"
+    if str.length(webhookKey) >= 32
+        alert(outcomePayload, alert.freq_once_per_bar_close)
+    evidenceActive := false
+    evidenceSignalId := ""
+    evidenceStop := na
+    evidenceTarget1 := na
+    evidenceTarget2 := na
+    evidenceStartBar := na
+else if newStrongDecision
+    if str.length(webhookKey) >= 32
+        alert(payload, alert.freq_once_per_bar_close)
+    if not evidenceActive
+        evidenceActive := true
+        evidenceSignalId := signalId
+        evidenceStop := stopPrice
+        evidenceTarget1 := target1
+        evidenceTarget2 := target2
+        evidenceStartBar := bar_index
+
+var table radar = table.new(position.top_right, 2, 10, bgcolor = color.rgb(4, 27, 19), frame_color = color.rgb(39, 105, 73), frame_width = 1)
+f_row(int row, string left, string right, color rightColor = color.white) =>
+    table.cell(radar, 0, row, left, text_color = color.rgb(120, 169, 143), text_size = size.small)
+    table.cell(radar, 1, row, right, text_color = rightColor, text_size = size.small)
+
+if barstate.islast
+    color verdictColor = verdictCode == 3 ? color.lime : verdictCode == 2 ? color.rgb(190, 255, 80) : verdictCode == 1 ? color.orange : color.rgb(255, 84, 113)
+    f_row(0, "FINPILOT UNIVERSAL", marketType, color.rgb(89, 240, 152))
+    f_row(1, "KARAR", is15Minute ? verdict : "15 DK SEÇ", is15Minute ? verdictColor : color.orange)
+    f_row(2, "TEKNİK / VERİ", str.tostring(score) + "/100 · %" + str.tostring(dataHealth))
+    f_row(3, "KURULUM", setupName)
+    f_row(4, "15 DK / 1 GÜN", intradayDirection + " / " + dayDirection)
+    f_row(5, "1 HAFTA", weekDirection)
+    f_row(6, "GİRİŞ", str.tostring(entryLow, format.mintick) + " – " + str.tostring(entryHigh, format.mintick))
+    f_row(7, "STOP / HEDEF 1", str.tostring(stopPrice, format.mintick) + " / " + str.tostring(target1, format.mintick))
+    f_row(8, "HEDEF 2 / R-R", str.tostring(target2, format.mintick) + " / " + str.tostring(effectiveRewardRisk, "#.##") + "R")
+    f_row(9, "NOT", volumeRequired and not volumeAvailable ? "HACİM YOK" : overextended ? "KOVALAMA" : barstate.isconfirmed ? "MUM KAPANDI" : "ÖN ANALİZ", volumeRequired and not volumeAvailable or overextended ? color.orange : color.rgb(89, 240, 152))

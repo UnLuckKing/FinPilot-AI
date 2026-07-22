@@ -1,6 +1,7 @@
-node_modules
-.next
 .env
-.env.local
-coverage
-*.log
+data/*.jsonl
+data/*.tmp
+!data/.gitkeep
+node_modules/
+.DS_Store
+coverage/

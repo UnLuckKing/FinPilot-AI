@@ -1,147 +1,115 @@
-# FinPilot AI v3.0
+# FinPilot Universal Analyzer v2
 
-FinPilot AI; portföy takibi, yatırım bütçesi, varlık dağılımı, risk görünümü, hedefler ve açıklanabilir finansal analiz sunan Türkçe bir karar destek uygulamasıdır.
+FinPilot, TradingView içindeki piyasa verilerini kullanarak **manuel işlem kararı** üreten çoklu piyasa analiz sistemidir. Hisse, ETF, kripto, forex, vadeli, endeks ve emtia için ayrı eşikler uygular; otomatik emir göndermez ve aracı kurum hesabına bağlanmaz.
 
-> FinPilot yatırım danışmanlığı sunmaz, kâr garantisi vermez ve gerçek para işlemi yapmaz. Yerleşik fiyatlar demo veridir.
+## Verdiği kararlar
 
-## Kurulumsuz, doğrudan açılan sürüm
+| Karar | Anlamı |
+|---|---|
+| `YATIR` | Kapanmış mum, sağlıklı veri, üst zaman teyidi, geçerli kurulum ve yeterli ödül/risk birlikte sağlandı. |
+| `YATIRILABİLİR — SEN BİLİRSİN` | İşlem planı geçerli fakat güçlü karar için bir veya daha fazla yumuşak teyit eksik. |
+| `BEKLE` | Yön olumlu olabilir; giriş bölgesi gelmedi, fiyat kaçtı veya kurulum henüz tamamlanmadı. |
+| `YATIRMA` | Yön/risk yapısı uygun değil veya sert engel var. |
+| `VERİ YETERSİZ` | Eksik, eski ya da doğrulanmamış veri nedeniyle karar üretilmedi. |
 
-ZIP dosyasını çıkardıktan sonra **`FinPilot-AI.html`** dosyasına çift tıklayın. Windows'ta isterseniz **`FinPilot-AI-Baslat.bat`** dosyasını da kullanabilirsiniz.
-
-Bu sürüm:
-
-- İnternet, API anahtarı veya Node.js istemez.
-- Tarayıcıda doğrudan arayüz olarak açılır.
-- Portföy, bütçe, dağılım ve kayıp sonrası toparlanma planını hesaplar.
-- Verileri yalnızca kullanılan tarayıcıda saklar.
-- JSON yedek indirme ve geri yükleme sunar.
-
-Yüzde 90 veya yüzde 100 kesin kazanç garanti edilemez. Kayıp planı; zararı büyüten martingale yaklaşımı yerine yeni riski azaltır, güvenli aylık katkıyı hesaplar ve tahmini toparlanma süresini gösterir.
-
-## Hızlı başlangıç
-
-Gerekenler: Node.js 20.9 veya üzeri.
-
-```bash
-npm install
-npm run dev
-```
-
-Ardından `http://localhost:3000` adresini açın ve **Demoyu aç** düğmesini kullanın. Demo için e-posta, banka hesabı veya API anahtarı gerekmez.
-
-Üretim derlemesi:
-
-```bash
-npm run test
-npm run typecheck
-npm run build
-npm start
-```
+Bu ifadeler yazılımın teknik sınıflandırmalarıdır; kâr garantisi veya kişisel yatırım danışmanlığı değildir.
 
 ## Çalışan özellikler
 
-- Koyu temalı, mobil uyumlu Türkçe finans paneli
-- Yerel demo hesap, kayıt/giriş/onboarding akışları
-- Alış/satış işlemlerinden ortalama maliyet, gerçekleşen ve gerçekleşmemiş kâr/zarar
-- İşlem ekleme, düzenleme, silme; CSV içe ve dışa aktarma
-- Gelir, gider, borç, acil fon, yaklaşan harcama ve güvenlik payına dayalı yatırım bütçesi
-- Risk profiline göre 100% toplamlı dağılım planı ve aylık katkı senaryosu
-- Piyasa araması, varlık detayı, takip listeleri ve uygulama içi uyarılar
-- Kullanıcının gerçek uygulama verisini kullanan ücretsiz kural tabanlı FinPilot Asistan
-- Haftalık/aylık/risk/sağlık raporu görünümleri, CSV ve yazdır/PDF akışı
-- Finansal hedef ekleme, düzenleme, silme ve gereken aylık katkı hesabı
-- PWA manifesti ve üretim ortamında service worker kaydı
-- Supabase/PostgreSQL şeması, kontroller ve kullanıcı bazlı RLS politikaları
+- TradingView **Pine Screener** için tüm sembol türlerini otomatik tanıyan `Universal Radar`
+- Açık grafikte giriş bölgesi, kovalama sınırı, stop, iki hedef ve alternatif geri çekilme planı veren `Deep Analyzer`
+- BIST hisseleri, global hisseler/ETF, kripto spot, forex, vadeli, endeks, emtia ve tahvil için ayrı veri/hacim/oynaklık profilleri
+- Trend geri çekilmesi, hacimli kırılım, kırılım yeniden testi ve göreli güçlü lider kurulumu
+- Kapanmış 1 saat, 4 saat, günlük ve haftalık yön teyidi
+- `YATIR`, `YATIRILABİLİR`, `BEKLE`, `YATIRMA` ve `VERİ YETERSİZ` kararları
+- Eksik hacim, eski fiyat, yetersiz geçmiş ve kapanmamış mum için fail-closed veri kapısı
+- Giriş aralığı, stop, hedef 1, hedef 2, kovalama sınırı, geçerlilik ve güncel risk/kazanç
+- TradingView webhooklarını doğrulayan bağımlılıksız Node.js sunucusu
+- Tekrar koruması, zaman aşımı, gövde sınırı, hız sınırı, isteğe bağlı IP izin listesi ve güvenlik başlıkları
+- JSONL kalıcı kanıt günlüğü, hedef/stop sonuçları, gözlenen başarı ve Wilson `%95` aralığı
+- Türkçe, responsive canlı radar paneli
+- Docker, Windows başlatıcı, otomatik testler ve Pine statik güvenlik kontrolü
 
-## TradingView üzerinde çoklu piyasa araştırma paneli
+## “Bütün piyasalar” nasıl çalışır?
 
-`extension` klasörü, TradingView yanında çalışan ücretsiz Chrome yan panelidir. Geniş bir BIST havuzunu ve Binance'teki likit USDT spot çiftlerini kendi tarar. Sembol, fiyat, CSV veya emir girişi istemez; aracı kuruma ya da borsa hesabına bağlanmaz ve gerçek emir göndermez.
+TradingView herkese açık bir piyasa veri API'si sunmadığı için FinPilot fiyatları dışarıdan kazımaz. Tarama, TradingView'in resmî Pine Screener ve watchlist alarm altyapısında yapılır.
 
-- İş Yatırım temel tablosundan fiili dolaşım piyasa değerine göre en fazla 120 likit BIST hissesi seçer; veri kaynağı bozulursa 30 hisselik yedek havuza geçer.
-- Binance'in anahtarsız herkese açık piyasa verisinden en fazla 140 likit USDT spot çifti seçer; stablecoin ve `UP/DOWN/BULL/BEAR` kaldıraçlı tokenları dışlar.
-- BIST için 1, 5 ve 20 işlem günü; kripto için 4 saat, 1 gün ve 7 gün yükseliş/düşüş/yatay olasılığı ile beklenen aralık gösterir.
-- Trend devamı, geri çekilme, kırılım teyidi ve yatay piyasa dönüşü stratejilerini ayrı backtest eder; güncel rejime göre bir champion ve challenger seçer.
-- Sabit kurallı anchored walk-forward dilimleri, dönem dışı işlemler, olasılık kalibrasyonu, yaklaşık PBO ve Deflated Sharpe ile aşırı uyum riskini ölçer. Kanıt notu `A` veya `B` değilse olumlu sinyal açılmaz.
-- Momentum, hacim, masraflı backtest, yakın dönem davranışı ve 250 senaryolu Monte Carlo stres testi uygular.
-- BIST temel oranlarını sektör ağırlıklarıyla karşılaştırır; veri kapsamı, likidite ve sektör örnek derinliğini ayrı temel sağlık bileşenleri olarak gösterir. KAP bildirimlerini olay türü, yön ve şirket büyüklüğüne göre önemlendirir; tanımlı ciddi riskler zorunlu kapıyı kapatır.
-- Kriptoda hacim, işlem sayısı, aşırı 24 saatlik hareket ve BTC/piyasa rejimi ayrı kapılardır.
-- Yalnızca bütün kapılar geçtiğinde `YATIR`, diğer her durumda `YATIRMA` yazar; reddedilen her kapıda gerçekleşen değer ile gerekli eşiği sayısal olarak gösterir.
-- Destek geri çekilmesi, EMA yeniden testi ve ATR dengeli olmak üzere üç emir planı hesaplar. Fiyat adımına yuvarlanmış alış limiti, stop tetik, stop-limit ve iki hedef yalnızca geçerli `YATIR` sinyalinde etkinleşir.
-- Portföy kapısı açık kâğıt işlemleri hesaba katar; toplam pozisyon, BIST sektör yoğunluğu, kripto yoğunluğu ve aynı piyasadaki getiri korelasyonunu sınırlar.
-- `Tümü`, `BIST`, `Kripto`, `Takip` ve `Geçmiş` sekmeleri vardır. Geçmişte sinyal önce `EMİR BEKLİYOR` olur; limit sonraki yeni kapanmış mumda görülürse `AKTİF` sayılır. İlk hedefte yarım çıkış ve maliyete taşınan stop ayrıca izlenir; aynı mumdaki stop/hedef çakışmasında stop önce kabul edilir.
-- Aynı piyasa ve stratejide en az 12 sonuç biriktiğinde pozitif sonuç oranı `%40`ın veya ortalama sonuç `0R`ın altına düşerse kâğıt performans koruması yeni olumlu sinyali kilitler. Bu izleme gerçek aracı kurum gerçekleşmesi değildir.
-- Bir piyasa kaynağı hata verse bile diğer piyasanın taraması devam eder. Eksik veya eski veriden olumlu sinyal üretilmez.
-- Yeni `YATIR` sonucu oluştuğunda ve takipteki bir varlık tek eksik kapıya yaklaştığında yerel Chrome bildirimi gösterir. Tarama, Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir.
-- İsteğe bağlı Pine Script v6 araçları yalnızca grafik teyidi içindir; TradingView'in fiyat/indikatör verisi için halka açık bir API'si olmadığından panel veriyi TradingView'den çekmez.
+1. TradingView'de BIST, global hisse/ETF, kripto, forex ve diğer piyasa listeleri oluşturulur.
+2. `FinPilot_Universal_Radar.pine` Pine Screener'da seçilir.
+3. Her liste aynı göstergeyle taranır; sembolün türüne göre profil otomatik değişir.
+4. Ultimate hesabındaki watchlist alarmları güçlü kararları arka planda izleyebilir.
+5. Webhook kullanılırsa kararlar bu panelde tek yerde toplanır.
 
-Kurulum için [TRADINGVIEW-KURULUM.md](TRADINGVIEW-KURULUM.md) dosyasını izleyin veya Windows'ta `TRADINGVIEW-KURULUMUNU-AC.bat` dosyasını çalıştırın.
+Ultimate'ta izleme listesi başına 1.000 sembol sınırı bulunduğundan daha geniş evrenler `scripts/split-watchlist.mjs` ile güvenli parçalara ayrılabilir. Aynı anda bütün dünyadaki milyonlarca sembolü tek Pine çalışmasında taramak TradingView sınırları nedeniyle mümkün değildir; sistem hesabında bulunan listeleri eksiksiz tarar.
 
-## Demo veri davranışı
+## Hızlı başlangıç
 
-Uygulama ilk açılışta örnek bir portföy yükler. Yapılan değişiklikler tarayıcının `localStorage` alanında saklanır. Ayarlar → Gizlilik bölümünden veri indirilebilir veya demo sıfırlanabilir.
-
-`GET /api/market` demo sağlayıcı verisini ve gecikme etiketini döndürür. `POST /api/ai` Zod ile doğrulanan finansal bağlamdan anahtarsız, açıklanabilir demo yanıtı üretir.
-
-## Supabase kurulumu (isteğe bağlı)
-
-Ücretsiz Supabase projesi kullanmak isterseniz:
-
-1. `.env.example` dosyasını `.env.local` olarak kopyalayın.
-2. `NEXT_PUBLIC_SUPABASE_URL` ve `NEXT_PUBLIC_SUPABASE_ANON_KEY` değerlerini girin.
-3. `supabase/migrations/001_initial_schema.sql` dosyasını SQL Editor içinde çalıştırın.
-4. `supabase/seed.sql` dosyasını çalıştırın.
-
-Şema `auth.users` tablosunu kullanıcı kaynağı olarak kullanır. Kullanıcıya ait tablolar RLS ile izole edilmiştir. Servis rolü anahtarı hiçbir zaman tarayıcıya gönderilmemelidir.
-
-## Ortam değişkenleri
-
-Tüm seçenekler `.env.example` içindedir. Varsayılan çalışma şekli:
-
-```env
-MARKET_DATA_PROVIDER=demo
-AI_PROVIDER=demo
-```
-
-OpenAI veya ücretli piyasa API'si zorunlu değildir. E-posta ve push bildirimleri, sağlayıcı kimlik bilgileri yapılandırılana kadar kapalıdır.
-
-## CSV biçimi
-
-```csv
-assetId,type,quantity,price,commission,date,note
-gold,Alış,1,4750,5,2026-07-01,Örnek işlem
-```
-
-Desteklenen işlem türleri `Alış` ve `Satış`; tarih biçimi `YYYY-MM-DD` şeklindedir. İçe aktarılan kimlikler temizlenir, sayılar negatif olamaz ve geçersiz satırlar reddedilir.
-
-## Proje yapısı
-
-```text
-app/                    Next.js sayfaları, manifest ve API rotaları
-components/             Uygulama kabuğu, sayfalar ve ortak arayüz bileşenleri
-lib/                    Tipler, demo veri, durum ve finans hesaplamaları
-public/                 PWA simgesi ve service worker
-supabase/migrations/    PostgreSQL şeması ve RLS politikaları
-supabase/seed.sql       Ortak demo varlıkları
-```
-
-## Güvenlik sınırları
-
-- Banka veya aracı kurum şifresi istenmez ve saklanmaz.
-- Gerçek para alım/satımı ya da otomatik emir yürütme yoktur.
-- Finansal girdiler istemci ve API sınırında doğrulanır.
-- CSV içerikleri temizlenir.
-- Gerçek API anahtarları frontend'e konmaz.
-- Eksik piyasa verileri uydurulmaz; “Veri mevcut değil” durumu gösterilir.
-- KAP, veri tazeliği, kapsam veya stres kontrollerinden biri doğrulanamazsa sonuç `YATIRMA` olur.
-- Stop-limit emri fiyat boşluğunda gerçekleşmeyebilir; gösterilen seviyeler emir değil araştırma önerisidir.
-
-## Doğrulama
+Gereken: Node.js 20.9 veya üzeri.
 
 ```bash
-npm test
-npm run test:tradingview
-npm run typecheck
-npm run build
+cp .env.example .env
+# .env içinde en az 32 karakterlik rastgele FINPILOT_WEBHOOK_SECRET oluştur
+npm start
 ```
 
-GitHub Actions aynı kontrolleri her gönderimde çalıştırır. Bu testler yazılım hatası riskini azaltır; gelecekteki piyasa hareketini veya kârı garanti etmez.
+Windows:
+
+```bat
+copy .env.example .env
+FinPilot-Baslat.bat
+```
+
+Panel: `http://127.0.0.1:4310`
+
+Webhook: `https://SUNUCUNUZ/api/webhooks/tradingview`
+
+Yerel `127.0.0.1` adresine TradingView internetten ulaşamaz. Webhook kullanacaksanız HTTPS alan adı/tünel ve kimlik doğrulama gerekir. Webhook istemiyorsanız Pine Screener ve TradingView bildirimleri tek başına çalışır.
+
+## TradingView kurulumu
+
+1. `tradingview/FinPilot_Universal_Radar.pine` içeriğini Pine Editor'e yapıştırın, kaydedin ve favorilere ekleyin.
+2. TradingView ürün menüsünden **Pine Screener** açın.
+3. İzleme listenizi, `FinPilot Universal Radar v2` göstergesini ve **15 dakika** zaman dilimini seçin.
+4. `Karar` sütununu büyükten küçüğe sıralayın: `3=YATIR`, `2=YATIRILABİLİR`, `1=BEKLE`, `0=YATIRMA`, `-1=VERİ YETERSİZ`.
+5. Ayrıntılı inceleme için `FinPilot_Deep_Analyzer.pine` dosyasını grafiğe ekleyin.
+6. Webhook kullanacaksanız Pine ayarındaki anahtarı `.env` ile aynı yapın ve alarm türünde `Any alert() function call` seçin.
+
+Ayrıntılı ve kontrollü kurulum: [TRADINGVIEW-KURULUM.md](TRADINGVIEW-KURULUM.md).
+
+## Veri gereksinimi
+
+- Kripto borsalarının TradingView verisi genellikle gerçek zamanlıdır.
+- Birçok hisse ve vadeli borsa verisi, TradingView planından ayrı veri aboneliği gerektirir.
+- `BIST MIXED` gerçek zamanlı fiyat sağlar fakat hacim sağlamaz. Hacimsiz BIST analizi güçlü `YATIR` seviyesine yükselmez.
+- Opsiyonlar listede görülebilir ancak kullanım fiyatı, vade ve ima edilen oynaklık olmadan güçlü karar üretilmez.
+- Pine, TradingView arayüzündeki “gecikmeli veri” rozetini doğrudan okuyamaz. FinPilot mum zamanını ve veri mevcudiyetini kontrol eder; borsa aboneliğini kullanıcı TradingView hesap ekranından doğrulamalıdır.
+
+## Kanıt ve doğruluk
+
+`Teknik puan` gerçek olasılık değildir. Panel yalnız sonuçlanan sinyallerden gözlenen başarı hesaplar. Örnek sayısı 30'un altındaysa kanıt `YETERSİZ`, 30–59 `ERKEN`, 60–149 `GELİŞİYOR`, 150 ve üzeri `GÜÇLÜ` olarak işaretlenir. Başarı oranının yanında belirsizliği göstermek için Wilson `%95` aralığı gösterilir.
+
+## Kontroller
+
+```bash
+npm run check
+```
+
+Bu komut:
+
+- analiz motoru karar senaryolarını,
+- veri eksikliği ve hacim kapılarını,
+- webhook kimlik doğrulamasını,
+- tekrar korumasını,
+- kalıcı günlüğü,
+- HTTP entegrasyonunu,
+- Pine güvenlik kurallarını
+
+kontrol eder. Pine kaynaklarının kesin derlemesi yalnız TradingView Pine Editor içinde doğrulanabilir.
+
+## KAP sınırı
+
+KAP'ın resmî yüksek yoğunluklu REST servisi Borsa İstanbul veri dağıtım sözleşmesi ve API anahtarı gerektirir. Bu nedenle ücretsiz sürüm KAP sitesini kazımaz ve “KAP yapay zekâsı çalışıyor” izlenimi vermez. Lisanslı servis alınırsa ayrı bir sağlayıcı adaptörü eklenebilir.
+
+## Güvenlik
+
+Canlı internete açmadan önce [SECURITY.md](SECURITY.md) dosyasını okuyun. Webhook anahtarını Pine dışında paylaşmayın; broker, banka, TradingView veya e-posta şifresi kesinlikle kullanmayın.

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>FinPilot Universal Analyzer</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="FinPilot ana sayfa">
+        <span class="brand-mark">F</span>
+        <span><strong>FinPilot</strong><small>Universal Analyzer v2</small></span>
+      </a>
+      <div class="top-actions">
+        <span id="connection" class="connection"><i></i> Bağlanıyor</span>
+        <a class="button ghost" href="/api/export">Veriyi indir</a>
+        <button id="refresh" class="button">Yenile</button>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero panel">
+        <div class="hero-copy">
+          <p class="eyebrow">TÜM PİYASALAR · MANUEL KARAR DESTEĞİ</p>
+          <h1>Piyasayı tara.<br><em>Kararı açıkça gör.</em></h1>
+          <p>Hisse, ETF, kripto, forex, vadeli, endeks ve emtiayı kendi piyasa kurallarıyla değerlendirir. Emir göndermez; giriş, stop, hedef ve nedenleri gösterir.</p>
+          <div class="legend">
+            <span class="pill invest">YATIR</span>
+            <span class="pill optional">YATIRILABİLİR — SEN BİLİRSİN</span>
+            <span class="pill wait">BEKLE</span>
+            <span class="pill avoid">YATIRMA</span>
+          </div>
+        </div>
+        <div class="hero-status">
+          <span>SON GÜNCELLEME</span>
+          <strong id="updatedAt">—</strong>
+          <p id="webhookState">Webhook kontrol ediliyor</p>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Genel ölçümler">
+        <article class="metric panel"><span>TOPLAM ANALİZ</span><strong id="totalAnalyses">0</strong><small>Kalıcı kanıt günlüğü</small></article>
+        <article class="metric panel"><span>YATIR SONUCU</span><strong id="investCount" class="green">0</strong><small>Güçlü ve eksiksiz veri</small></article>
+        <article class="metric panel"><span>PİYASA SAYISI</span><strong id="marketCount">0</strong><small>Ayrı piyasa profili</small></article>
+        <article class="metric panel"><span>GÖZLENEN BAŞARI</span><strong id="accuracy">—</strong><small id="evidenceLabel">Henüz yeterli örnek yok</small></article>
+      </section>
+
+      <section class="workspace">
+        <aside class="sidebar panel">
+          <div class="side-title"><span>FİLTRELER</span><button id="clearFilters">Temizle</button></div>
+          <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Sembol ara…" autocomplete="off"></label>
+          <div class="filter-group">
+            <b>KARAR</b>
+            <div id="verdictFilters" class="filter-list"></div>
+          </div>
+          <div class="filter-group">
+            <b>PİYASA</b>
+            <div id="marketFilters" class="filter-list"></div>
+          </div>
+          <div class="data-rule">
+            <span>GÜVENLİK KURALI</span>
+            <p>Eksik, eski veya doğrulanmamış veri güçlü “YATIR” sonucuna dönüşemez.</p>
+          </div>
+        </aside>
+
+        <section class="radar">
+          <div class="section-head">
+            <div><p class="eyebrow">CANLI RADAR</p><h2>En güçlü analizler</h2></div>
+            <span id="resultCount">0 sonuç</span>
+          </div>
+          <div id="cards" class="cards" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section class="evidence panel">
+        <div>
+          <p class="eyebrow">KANIT MOTORU</p>
+          <h2>Puan ayrı, gerçek sonuç ayrı.</h2>
+          <p>Teknik skor olasılık değildir. Sinyaller sonradan değiştirilemez şekilde kaydedilir; hedef veya stop sonucu geldikçe gözlenen başarı ve %95 aralık hesaplanır.</p>
+        </div>
+        <dl>
+          <div><dt>SONUÇLANAN</dt><dd id="closedOutcomes">0</dd></div>
+          <div><dt>KAZANAN</dt><dd id="winningOutcomes">0</dd></div>
+          <div><dt>%95 ARALIK</dt><dd id="confidenceInterval">—</dd></div>
+          <div><dt>KANIT DERECESİ</dt><dd id="evidenceGrade">KANIT YOK</dd></div>
+        </dl>
+      </section>
+
+      <section class="setup panel">
+        <div>
+          <p class="eyebrow">NASIL ÇALIŞIR?</p>
+          <h2>TradingView tarar, FinPilot açıklar.</h2>
+        </div>
+        <ol>
+          <li><b>1</b><span>Pine Screener göstergesini favorilere ekle ve piyasa izleme listeni tara.</span></li>
+          <li><b>2</b><span>Watchlist alarmını FinPilot webhook adresine bağla.</span></li>
+          <li><b>3</b><span>Bu panelde karar, giriş aralığı, stop, iki hedef ve eksik koşulları gör.</span></li>
+          <li><b>4</b><span>Alımı sen kendi uygulamandan yap; FinPilot hiçbir hesaba bağlanmaz.</span></li>
+        </ol>
+      </section>
+    </main>
+
+    <footer>FinPilot Universal Analyzer · Kâr garantisi vermez · Otomatik emir göndermez</footer>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

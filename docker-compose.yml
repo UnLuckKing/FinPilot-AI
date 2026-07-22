@@ -1,0 +1,11 @@
+services:
+  finpilot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:4310:4310"
+    volumes:
+      - ./data:/app/data
+    environment:
+      FINPILOT_HOST: 0.0.0.0

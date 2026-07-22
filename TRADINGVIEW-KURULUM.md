@@ -1,104 +1,67 @@
-# FinPilot Multi-Market v3.0 — Kurulum
+# TradingView kurulumu
 
-FinPilot geniş BIST ve Binance USDT spot evrenini kendi tarar; `YATIR`/`YATIRMA`, yön olasılıkları, alış limiti ve stop-limit araştırma planı üretir. Gerçek emir göndermez, İş Bankası/İş Yatırım veya Binance hesabına bağlanmaz ve kullanıcı adı, şifre ya da API anahtarı istemez.
+## 1. Pine Screener radarı
 
-## En kısa kurulum
+1. TradingView'de herhangi bir grafik açın.
+2. Alt bölümden Pine Editor'ü açın.
+3. `tradingview/FinPilot_Universal_Radar.pine` dosyasını yapıştırıp kaydedin.
+4. Göstergenin yıldızına basarak favorilere ekleyin.
+5. Ürünler → Screeners → Pine yoluna gidin.
+6. İzleme listesini seçin.
+7. Gösterge olarak FinPilot Universal Radar v2'yi seçin.
+8. Zaman dilimini `15 dakika` yapın.
+9. Tarama bitince `Karar` sütununu azalan sıralayın.
 
-1. ZIP dosyasını bir klasöre çıkar.
-2. `TRADINGVIEW-KURULUMUNU-AC.bat` dosyasına çift tıkla.
-3. Açılan `chrome://extensions` sayfasında sağ üstten **Geliştirici modu**nu aç.
-4. **Paketlenmemiş öğe yükle** düğmesine bas ve paketteki `extension` klasörünü seç.
-5. TradingView'i aç. Sağ alttaki **✦ AI** düğmesine veya Chrome araç çubuğundaki FinPilot simgesine bas.
+Karar kodları:
 
-İlk açılışta kayıt yoksa tarama kendiliğinden başlar. Chrome açıkken kapanmış dört saatlik mum sınırından yaklaşık beş dakika sonra yenilenir. Tek manuel kontrol **ŞİMDİ TÜM PİYASALARI ARAŞTIR** düğmesidir.
+- `3`: YATIR
+- `2`: YATIRILABİLİR — SEN BİLİRSİN
+- `1`: BEKLE
+- `0`: YATIRMA
+- `-1`: VERİ YETERSİZ
 
-Uzantıyı güncellediğinde `chrome://extensions` sayfasında FinPilot kartındaki yenile simgesine bir kez bas.
+## 2. Ayrıntılı grafik analizi
 
-## Hangi varlıkları tarar?
+`tradingview/FinPilot_Deep_Analyzer.pine` dosyasını ikinci gösterge olarak grafiğe ekleyin. Grafiği 15 dakika yapın ve yalnız `Analizde kullanılacak sermaye` değerini girin.
 
-| Piyasa | Evren | Veri | Yön vadeleri | Özel güvenlik kapısı |
-| --- | --- | --- | --- | --- |
-| BIST | İş Yatırım tablosundan fiili dolaşım piyasa değerine göre en fazla 120 likit hisse | Günlük kapanış, hacim ve temel oranlar | 1, 5, 20 işlem günü | Temel değerleme, KAP, BIST piyasa genişliği |
-| Kripto | Binance'te hacim ve işlem sayısı eşiğini geçen en fazla 140 USDT spot çifti | Yalnızca kapanmış 4 saatlik mumlar | 4 saat, 1 gün, 7 gün | Likidite, aşırı hareket/pump ve BTC/piyasa rejimi |
+Gösterge şunları çizer:
 
-Kripto havuzu stablecoin tabanlarını ve `UP`, `DOWN`, `BULL`, `BEAR` kaldıraçlı tokenları dışlar. Futures, kaldıraç ve short yoktur. Bu sınırlar hem işlem riskini hem de ücretsiz veri kaynağına aynı anda gönderilen istekleri kontrol etmek içindir; borsadaki her listelenmiş varlığın körlemesine gösterildiği anlamına gelmez.
+- Plan A giriş bölgesi
+- Fiyat kaçarsa kovalama sınırı
+- Stop
+- Hedef 1 ve hedef 2
+- Plan B geri çekilme bölgesi
+- 15 dakika, 1 gün ve 1 hafta yönü
+- Eksik koşul ve ana risk
 
-## Karar nasıl oluşur?
+## 3. Watchlist düzeni
 
-Her varlıkta şu kontroller birlikte çalışır:
+Tek dev liste yerine piyasa davranışına göre ayrı listeler önerilir:
 
-1. Veri tazeliği ve tarama kapsamı
-2. Güçlü/zayıf trend, yatay, yüksek oynaklık, risk-off ve ani hareket rejimi
-3. Dört model arasında rejim uyumlu champion/challenger seçimi
-4. EMA trendi, RSI, MACD, ATR, kırılım ve hacim
-5. Komisyon, fiyat kayması ve gap içeren geçmiş simülasyon
-6. Sabit kurallı, yalnız önceki dönemden seçim yapan anchored walk-forward testi
-7. PBO ve Deflated Sharpe yaklaşımıyla aşırı uyum denetimi
-8. Zaman sırası korunmuş yerel lojistik model ve olasılık kalibrasyonu
-9. Benzer geçmiş dönemlerden üç vadeli yön olasılığı ve beklenen aralık
-10. Yakın dönem performansı ve 250 senaryolu stres testi
-11. Piyasa özel temel/KAP olayları veya likidite/BTC kapıları
-12. Destek, EMA ve ATR tabanlı üç emir planı
-13. Açık kâğıt işlemlerle korelasyon, sektör ve piyasa yoğunluğu sınırı
+- `FinPilot — BIST`
+- `FinPilot — Global Hisse ETF`
+- `FinPilot — Kripto Spot`
+- `FinPilot — Forex`
+- `FinPilot — Vadeli Endeks Emtia`
 
-| Etiket | Anlamı |
-| --- | --- |
-| **YATIR** | O taramadaki tüm zorunlu kapılar geçti. Yine de kazanç garantisi değildir. |
-| **YATIRMA** | En az bir kapı geçmedi veya doğrulanamadı. Kart “Ne değişmeli?” alanında gerçekleşen değerleri ve gerekli eşikleri gösterir. |
-| **YATIR'a en yakın** | Olumlu skoru olan fakat en fazla üç zorunlu kapısı eksik sonuçtur. Emir planı etkinleşmez. |
+Bu ayrım aynı anda farklı veri aboneliklerinin ve seansların karışmasını önler. Radar yine sembol türünü otomatik algılar.
 
-Sistem olumlu sonuç sayısını artırmak için eşikleri gevşetmez. Hiç `YATIR` görünmemesi hata olmak zorunda değildir; sıkı kurallarda normal bir sonuçtur.
+## 4. Bildirim
 
-Aynı piyasa-strateji çiftinde en az 12 sonuç izlendikten sonra pozitif sonuç oranı `%40`ın veya ortalama sonuç `0R`ın altına inerse performans koruması o modelin yeni `YATIR` üretmesini durdurur. Bu kayıtlar otomatik kâğıt işlemdir; gerçek işlem geçmişi sayılmaz.
+Sadece TradingView bildirimi istiyorsanız `FinPilot YATIR` ve `FinPilot YATIRILABİLİR` koşullarına watchlist alarmı kurun. Mümkünse frekansı mum kapanışında bir kez olarak ayarlayın.
 
-## Panel sekmeleri
+## 5. Panel webhooku
 
-- **Tümü:** BIST ve kripto sonuçlarını geçerli sinyal, yakın sonuç ve puana göre birleştirir.
-- **BIST:** Yalnızca hisse kartlarını ve KAP/temel metriklerini gösterir.
-- **Kripto:** Yalnızca spot kripto kartlarını, 24 saatlik hacmi ve hareketi gösterir.
-- **Takip:** En fazla üç eksik kapısı kalan varlıkları otomatik izler; önceki taramaya göre kaç kapı yaklaştığını gösterir.
-- **Geçmiş:** `YATIR` sinyalini önce `EMİR BEKLİYOR` olarak kaydeder. Limit sonraki yeni kapanmış mumda görülürse `AKTİF`; ilk hedefte yarım çıkıştan sonra `TAŞINAN STOP`; sonrasında `HEDEF 2`, `STOP`, `SÜRESİ DOLDU` veya `KURULUM BOZULDU` olarak izler.
+Paneli kullanacaksanız:
 
-Geçmiş sekmesi gerçek emir, gerçekleşme veya portföy kaydı değildir. Kapanmış mumun açık-yüksek-düşük-kapanış aralığını kullanır; bir mum içinde önce hedefe mi stopa mı dokunulduğu bilinmediğinde stopu önce kabul eder. Limit sinyal mumunda değil, yalnız sonraki yeni mumda dolabilir. Bu muhafazakâr varsayımlar yine de gerçek aracı kurum dolumunu kanıtlamaz.
+1. `.env` ve Pine içindeki `Webhook anahtarı` aynı, rastgele ve en az 32 karakter olmalıdır.
+2. Alarm türü `Any alert() function call` olmalıdır.
+3. Webhook adresi `https://SUNUCUNUZ/api/webhooks/tradingview` olmalıdır.
+4. Sunucu yalnız 443/HTTPS üzerinden erişilebilir olmalıdır.
+5. Alarm günlüğünde webhook teslim durumunu kontrol edin.
 
-## Emir planının sınırı
+TradingView bazen webhook teslimini kaçırabilir. Panel bir sinyal gelmediğinde bunu piyasa kararı olarak yorumlamaz; yalnız aldığı sinyalleri gösterir.
 
-Sistem destek geri çekilmesi, EMA yeniden testi ve ATR dengeli planı ayrı ayrı sınar; geçerli olanlar içinden seçilen stratejiye uygun planı öne alır. Seviyeler gerçek emir değildir. Stop-limit tetiklendiğinde yalnızca limit emir oluşur; sert fiyat boşluğunda piyasa stop-limit fiyatının altına geçerse emir gerçekleşmeyebilir. Kripto 24/7 işlem gördüğü için bu risk hafta sonu da devam eder.
+## 6. Gerçek zamanlı veri kontrolü
 
-FinPilot portföy yoğunluğuna göre en fazla `%0,50` başlangıç risk bütçesini düşüren bir araştırma oranı gösterir; adet veya gerçek emir üretmez. Gerçek para düşünmeden önce sinyalleri en az 30 seans/uygun sayıda 4 saatlik dönem boyunca kâğıt üzerinde izle.
-
-## Veri ve hata davranışı
-
-- BIST günlük ve gecikmeli/kapanmış veridir; gün içi otomatik al-sat için tasarlanmamıştır.
-- Kriptoda devam eden 4 saatlik mum analiz dışıdır; yalnızca kapanan mumlar kullanılır.
-- KAP güncel akışı eski veya erişilemezse olumlu BIST sinyali kilitlenir. Sistem gerekirse şirket sayfası aramasına geri döner.
-- BIST veya Binance taraflarından biri tamamen hata verse bile diğer piyasa sonucu gösterilir.
-- Bir havuzun `%70`inden azı okunursa o piyasanın olumlu sinyali kapanır.
-- Uyarılar panelin altındaki **veri uyarısı** bölümünde sembol bazında görünür.
-
-## TradingView Pine araçları — isteğe bağlı
-
-Chrome paneli için Pine kodu kurmak zorunda değilsin. Grafik üzerinde ayrıca teknik teyit istersen:
-
-- `tradingview/FinPilot_Watchlist_Scanner_v1.pine`: Pine Screener sıralama göstergesi
-- `tradingview/FinPilot_Adaptive_Agent_v1.pine`: seçilen grafikte geçmiş strateji testi
-
-Pine kodunu Not Defteri ile aç, TradingView'deki **Pine Editor** alanına yapıştır, **Save** ve **Add to chart** düğmelerine bas. Pine KAP'ı, İş Yatırım temel tablosunu ve Chrome motorundaki bütün stres araştırmasını okuyamadığı için Pine'daki ön aday nihai `YATIR` değildir.
-
-## Önemli gerçek
-
-Geçmiş test, yerel model veya yüksek puan gelecekte kârı garanti etmez. `%90` veya `%100` kesin kazanma oranı güvenilir biçimde vaat edilemez. Piyasalar mantık ve araştırmayla daha disiplinli yönetilebilir; yine de gelecekteki haber, likidite, fiyat boşluğu ve rejim değişimi önceden kesin bilinemez.
-
-Uzantı İş Yatırım, Borsa İstanbul, KAP, Binance veya TradingView tarafından yayımlanmış resmî bir ürün değildir. Kaynak veriyi ticari veri yayını olarak yeniden dağıtma; sağlayıcıların kullanım koşulları geçerlidir.
-
-## Kaynak sayfaları
-
-- [İş Yatırım — Tarihsel Fiyat Bilgileri](https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/Tarihsel-Fiyat-Bilgileri.aspx)
-- [İş Yatırım — Temel Hisse Değerleri ve Oranları](https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/Temel-Degerler-Ve-Oranlar.aspx)
-- [Borsa İstanbul — BIST Pay Endeksleri](https://www.borsaistanbul.com/endeksler/bist-pay)
-- [KAP — BIST Şirketleri](https://kap.org.tr/tr/bist-sirketler)
-- [KAP — Bildirim Sorgu](https://kap.org.tr/tr/bildirim-sorgu)
-- [Binance Developers — Public Market Data](https://developers.binance.com/en/docs/products/spot/faqs/market_data_only)
-- [Binance Developers — Spot REST API](https://developers.binance.com/en/docs/binance-spot-api-docs/rest-api)
-- [TradingView — Fiyat/indikatör verisi için halka açık API bulunmaması](https://www.tradingview.com/support/solutions/43000474413-i-need-access-to-your-api-in-order-to-get-data-or-indicator-values/)
-- [TradingView — Pine Screener gereksinimleri](https://www.tradingview.com/support/solutions/43000742436-tradingview-pine-screener-key-features-and-requirements/)
+TradingView grafik başlığında gecikme işareti olmamalıdır. Hacim kullanan piyasada hacim sütunu görünmüyorsa `YATIR` sonucuna güvenmeyin. FinPilot bu durumda veri sağlığını düşürür.

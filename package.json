@@ -1,28 +1,17 @@
 {
-  "name": "finpilot-ai",
-  "version": "3.0.0",
+  "name": "finpilot-universal-analyzer",
+  "version": "2.0.0",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.9"
+  },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "test": "vitest run",
-    "test:tradingview": "node tradingview/static-check.js && node extension/engine.check.js && node extension/auto-scanner.check.js && node extension/crypto-scanner.check.js && node extension/market-aggregator.check.js && node extension/signal-tracker.check.js && node extension/portfolio-risk.check.js && node extension/near-watch.check.js && node extension/panel.check.js && node --check extension/background.js",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "lucide-react": "1.24.0",
-    "next": "16.2.10",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "recharts": "3.9.2",
-    "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@types/node": "24.10.1",
-    "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3",
-    "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "start": "node server/index.mjs",
+    "dev": "node --watch server/index.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check:pine": "node scripts/check-pine.mjs",
+    "check": "npm test && npm run check:pine",
+    "demo": "node scripts/send-demo.mjs"
   }
 }

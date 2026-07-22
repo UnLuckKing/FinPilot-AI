@@ -1,16 +1,30 @@
 # Güvenlik
 
-FinPilot yalnızca araştırma ve karar desteğidir. Aracı kurum hesabına bağlanmaz, kimlik bilgisi istemez ve gerçek emir göndermez.
+FinPilot broker veya banka hesabına bağlanmaz. Yine de webhook internete açıldığında bir sunucu hizmetidir.
 
-## Güvenli kullanım
+## Zorunlu kurallar
 
-- Önce en az 30 seans kâğıt üzerinde izleyin; geçmiş sonuçları gerçek kazanç garantisi saymayın.
-- `YATIR` yalnızca bütün veri, backtest, yön, yerel model, stres ve piyasa özel kapıları birlikte geçtiğinde gösterilir. BIST'te temel/KAP; kriptoda likidite/aşırı hareket/BTC rejimi ayrıca zorunludur.
-- Bir kaynak doğrulanamazsa sistem güvenlik gereği `YATIRMA` verir.
-- Alış limiti, stop tetik ve stop-limit fiyatları öneridir. Stop-limit emri sert fiyat boşluğunda hiç gerçekleşmeyebilir.
-- Kaynak koduna aracı kurum şifresi, erişim anahtarı veya `.env` dosyası eklemeyin.
-- Binance kapsamı yalnızca spot veridir; futures, kaldıraç, short veya hesap bağlantısı kullanılmaz.
+- `FINPILOT_WEBHOOK_SECRET` en az 32 rastgele karakter olmalıdır.
+- TradingView, banka, e-posta veya GitHub parolanızı webhook anahtarı olarak kullanmayın.
+- `.env` dosyasını Git'e eklemeyin.
+- İnternete yalnız HTTPS/443 üzerinden açın.
+- Ters vekil kullanmıyorsanız `FINPILOT_TRUST_PROXY=false` bırakın.
+- Güncellemeleri uygulamadan önce `npm run check` çalıştırın.
+- `data/events.jsonl` kişisel işlem araştırma geçmişidir; herkese açık paylaşmayın.
 
-## Açık bildirme
+## Uygulanan korumalar
 
-Para kaybına veya yanlış `YATIR` sinyaline yol açabilecek bir hata bulursanız herkese açık issue içinde hesap, anahtar veya kişisel veri paylaşmayın. GitHub deposundaki güvenlik bildirim kanalını kullanın ve sembol, veri tarihi, beklenen/gerçek davranış ile tekrar adımlarını ekleyin.
+- Sabit zamanlı webhook anahtarı karşılaştırması
+- 64 KiB istek sınırı
+- JSON ve alan izin listesi
+- 20 dakikalık zaman aşımı
+- Nonce tekrar koruması
+- IP başına hız sınırı
+- İsteğe bağlı IP izin listesi
+- CSP, frame engeli, MIME koruması ve sıkı yönlendirme politikası
+- Dosya yolu geçişine karşı statik sunucu sınırı
+- Anahtarın günlüğe yazılmaması
+
+## Olay bildirimi
+
+Bir güvenlik sorunu bulursanız herkese açık issue içinde anahtar veya özel veri paylaşmayın. Önce webhooku kapatın, anahtarı değiştirin ve ilgili kayıtları inceleyin.
