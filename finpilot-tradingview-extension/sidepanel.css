@@ -56,6 +56,7 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -74,6 +75,20 @@ button {
 .brand strong,
 .brand span {
   display: block;
+}
+
+.free-badge {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 4px 7px;
+  border: 1px solid #2d9d65;
+  border-radius: 999px;
+  background: #0d3424;
+  color: var(--green);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  white-space: nowrap;
 }
 
 .brand strong {
@@ -255,6 +270,56 @@ main {
   color: var(--muted);
   font-size: 10px;
   white-space: nowrap;
+}
+
+.horizon-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.horizon-card {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #081d15;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.horizon-card:hover,
+.horizon-card.active {
+  border-color: #45bd7a;
+  background: linear-gradient(145deg, rgb(82 245 155 / 10%), transparent), #0a2118;
+}
+
+.horizon-card span,
+.horizon-card strong,
+.horizon-card small {
+  display: block;
+}
+
+.horizon-card span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.horizon-card strong {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  color: var(--green);
+  font-size: 11px;
+}
+
+.horizon-card small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.35;
 }
 
 .dot {
@@ -467,6 +532,48 @@ main {
   font-size: 8px;
 }
 
+.lifecycle-panel {
+  background: linear-gradient(145deg, #0b261b, #081a13);
+}
+
+.lifecycle-steps {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+
+.lifecycle-steps span {
+  position: relative;
+  min-width: 0;
+  padding: 7px 2px;
+  border: 1px solid #214737;
+  border-radius: 8px;
+  color: #648877;
+  font-size: 7px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.lifecycle-steps span.active {
+  border-color: #39a96e;
+  background: #123827;
+  color: var(--green);
+  box-shadow: 0 0 12px rgb(82 245 155 / 10%);
+}
+
+.lifecycle-steps span.done {
+  border-color: #2b7752;
+  color: #a2d9bd;
+}
+
+.lifecycle-panel p,
+.plan-b-panel p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-start;
@@ -583,6 +690,64 @@ main {
   color: var(--muted);
   font-size: 9px;
   line-height: 1.4;
+}
+
+.strategy-list {
+  display: grid;
+  gap: 6px;
+}
+
+.strategy-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 31px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #153f2e;
+  border-radius: 9px;
+  background: #071b13;
+}
+
+.strategy-item.selected {
+  border-color: #3ca66c;
+  background: #0c2b1e;
+}
+
+.strategy-item span {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strategy-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #10291e;
+}
+
+.strategy-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2d9d65, var(--lime));
+}
+
+.strategy-item strong {
+  color: var(--muted);
+  font-size: 8px;
+  text-align: right;
+}
+
+.plan-b-panel {
+  border-color: #456339;
+  background: linear-gradient(145deg, rgb(182 255 85 / 6%), transparent), var(--panel);
+}
+
+.plan-b-panel.blocked {
+  border-color: #8a4560;
+  background: linear-gradient(145deg, rgb(255 94 120 / 7%), transparent), var(--panel);
 }
 
 details summary {
@@ -816,6 +981,48 @@ details summary {
   display: block;
 }
 
+.opportunity-inbox {
+  border-color: #2d7b55;
+}
+
+.inbox-list {
+  display: grid;
+  gap: 7px;
+}
+
+.inbox-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #1c4d38;
+  border-radius: 10px;
+  background: #071b13;
+  cursor: pointer;
+}
+
+.inbox-item:hover {
+  border-color: var(--green);
+}
+
+.inbox-item strong,
+.inbox-item span,
+.inbox-item small {
+  display: block;
+}
+
+.inbox-item span,
+.inbox-item small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.inbox-item > small {
+  color: var(--green);
+  font-weight: 800;
+}
+
 .best-card span {
   color: var(--muted);
   font-size: 8px;
@@ -984,6 +1191,27 @@ details summary {
   font-size: 18px;
 }
 
+.expectancy-card {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.expectancy-card span,
+.expectancy-card small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.expectancy-card strong {
+  color: var(--lime);
+  font-size: 20px;
+}
+
 .history-list {
   display: grid;
   gap: 7px;
@@ -1053,7 +1281,12 @@ footer p {
   }
 
   .trigger-grid,
-  .best-opportunities {
+  .best-opportunities,
+  .horizon-switcher {
     grid-template-columns: 1fr;
+  }
+
+  .lifecycle-steps {
+    grid-template-columns: repeat(3, 1fr);
   }
 }

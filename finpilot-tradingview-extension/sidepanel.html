@@ -12,9 +12,10 @@
         <div class="brand-mark" aria-hidden="true">F</div>
         <div>
           <strong>FinPilot</strong>
-          <span>TradingView Analyzer</span>
+          <span>TradingView Analyzer · Free</span>
         </div>
       </div>
+      <span class="free-badge">FREE MODE</span>
       <button id="refreshButton" class="icon-button" type="button" title="Şimdi yenile" aria-label="Şimdi yenile">↻</button>
     </header>
 
@@ -51,8 +52,21 @@
             </div>
           </section>
 
+          <section class="horizon-switcher" aria-label="İşlem vadesi">
+            <button id="intradayHorizonCard" class="horizon-card active" type="button" data-horizon="INTRADAY">
+              <span>15 DAKİKALIK</span>
+              <strong id="intradayDecisionLabel">Hesaplanıyor</strong>
+              <small id="intradayDecisionDetail">Yaklaşık 1 saatlik plan</small>
+            </button>
+            <button id="swingHorizonCard" class="horizon-card" type="button" data-horizon="SWING">
+              <span>1–5 İŞLEM GÜNÜ</span>
+              <strong id="swingDecisionLabel">Hesaplanıyor</strong>
+              <small id="swingDecisionDetail">Ayrı günlük plan</small>
+            </button>
+          </section>
+
           <section id="verdictCard" class="verdict-card">
-            <div class="eyebrow">SİSTEM KARARI</div>
+            <div id="decisionEyebrow" class="eyebrow">15 DK SİSTEM KARARI</div>
             <h2 id="verdictText">VERİ YETERSİZ</h2>
             <p id="verdictNote">Veri bekleniyor.</p>
             <div class="score-row">
@@ -91,6 +105,25 @@
             </div>
             <div id="executionGuard" class="execution-guard">İşlem uygulanabilirliği kontrol ediliyor.</div>
             <small id="candleStatus">Yalnız kapanmış 15 dk mumlarla karar verilir.</small>
+          </section>
+
+          <section class="section lifecycle-panel">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">İŞLEM YAŞAM DÖNGÜSÜ</span>
+                <h3 id="lifecycleHeadline">Plan hazırlanıyor</h3>
+              </div>
+              <span id="lifecycleHorizon" class="pill">—</span>
+            </div>
+            <div class="lifecycle-steps" aria-label="İşlem aşamaları">
+              <span data-life-step="WATCH">İzle</span>
+              <span data-life-step="TRIGGER">Tetik</span>
+              <span data-life-step="ENTRY">Giriş</span>
+              <span data-life-step="TARGET1">Kâr 1</span>
+              <span data-life-step="PROTECT">Maliyet</span>
+              <span data-life-step="EXIT">Çıkış</span>
+            </div>
+            <p id="lifecycleNote">Fiyat giriş bölgesine değmeden işlem başlamış sayılmaz.</p>
           </section>
 
           <section class="section">
@@ -138,8 +171,31 @@
             </div>
             <div class="plan-foot">
               <span id="invalidationText">—</span>
+              <span id="planValidity">—</span>
               <span id="quantityText">100.000 birim portföy için örnek adet: —</span>
             </div>
+          </section>
+
+          <section class="section strategy-panel">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">STRATEJİ TURNUVASI</span>
+                <h3 id="regimeName">Piyasa rejimi hesaplanıyor</h3>
+              </div>
+              <span id="selectedStrategy" class="pill">—</span>
+            </div>
+            <div id="strategyList" class="strategy-list"></div>
+          </section>
+
+          <section id="planBPanel" class="section plan-b-panel">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">OTOMATİK PLAN B</span>
+                <h3 id="planBStatus">NORMAL</h3>
+              </div>
+              <span id="planBRisk" class="pill">%0,5 risk</span>
+            </div>
+            <p id="planBReason">Aynı kurulum için etkin stop soğuması yok.</p>
           </section>
 
           <section class="section">
@@ -220,6 +276,16 @@
           </article>
         </section>
 
+        <section id="opportunityInbox" class="section opportunity-inbox hidden">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">YENİ FIRSATLAR</span>
+              <h3 id="inboxCount">0 yeni kayıt</h3>
+            </div>
+          </div>
+          <div id="inboxList" class="inbox-list"></div>
+        </section>
+
         <section id="nearestBanner" class="nearest-banner hidden">
           <span class="eyebrow">ONAYLI İŞLEM SİNYALİ YOK</span>
           <strong>En yakın adaylar gösteriliyor</strong>
@@ -238,6 +304,15 @@
         <section class="evidence-side-grid">
           <div><span>LONG gerçekleşme</span><strong id="longAccuracy">—</strong><small id="longSample">0 sonuç</small></div>
           <div><span>SHORT gerçekleşme</span><strong id="shortAccuracy">—</strong><small id="shortSample">0 sonuç</small></div>
+        </section>
+        <section class="evidence-side-grid horizon-evidence">
+          <div><span>15 dk gerçekleşme</span><strong id="intradayAccuracy">—</strong><small id="intradaySample">0 sonuç</small></div>
+          <div><span>1–5 gün gerçekleşme</span><strong id="swingAccuracy">—</strong><small id="swingSample">0 sonuç</small></div>
+        </section>
+        <section class="expectancy-card">
+          <span>İşlem başına gözlenen beklenti</span>
+          <strong id="observedExpectancy">—</strong>
+          <small>Giriş gerçekleşmeyen planlar başarı hesabına katılmaz.</small>
         </section>
         <section class="section">
           <div class="section-heading">
@@ -263,7 +338,7 @@
 
     <footer>
       <span class="dot live"></span>
-      <p>Emir göndermez. Teknik Güç olasılık değildir; SHORT için uygun ürün gerekir.</p>
+      <p>TradingView Free ile çalışır. Emir göndermez; Chrome kapalıyken tarama yapmaz.</p>
     </footer>
 
     <script type="module" src="sidepanel.js"></script>

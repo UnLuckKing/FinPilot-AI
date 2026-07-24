@@ -41,6 +41,28 @@ test("healthy bullish data yields a usable long-side classification", () => {
   assert.ok(result.plan.target2 > result.plan.target1);
 });
 
+test("intraday and 1–5 day decisions are calculated as independent horizons", () => {
+  const result = analyzeBundle(makeBundle(), NOW);
+  assert.equal(result.freeMode, true);
+  assert.equal(result.horizons.intraday.horizon, "INTRADAY");
+  assert.equal(result.horizons.swing.horizon, "SWING");
+  assert.match(result.horizons.intraday.decisionLabel, /15 DK/u);
+  assert.match(result.horizons.swing.decisionLabel, /1–5 GÜN/u);
+  assert.match(result.horizons.intraday.plan.validity, /15 dk/u);
+  assert.match(result.horizons.swing.plan.validity, /5 işlem günü/u);
+  assert.notEqual(result.horizons.intraday.id, result.horizons.swing.id);
+});
+
+test("each horizon exposes a regime-aware strategy tournament", () => {
+  const result = analyzeBundle(makeBundle(), NOW);
+  for (const decision of Object.values(result.horizons)) {
+    assert.ok(decision.regime?.label);
+    assert.ok(decision.strategyTournament?.candidates?.length >= 4);
+    assert.equal(decision.strategyTournament.selectedCode, decision.setupCode);
+    assert.ok(decision.strategyTournament.candidates.every((item) => item.score >= 0 && item.score <= 100));
+  }
+});
+
 test("stale data fails closed", () => {
   const result = analyzeBundle(makeBundle({ stale: true, marketOpen: true }), NOW);
   assert.equal(result.verdict, VERDICTS.NO_DATA);
@@ -105,4 +127,16 @@ test("evidence keeps LONG and SHORT forward results separate", () => {
   assert.equal(evidence.bySide.LONG.observedAccuracy, 50);
   assert.equal(evidence.bySide.SHORT.sampleSize, 1);
   assert.equal(evidence.bySide.SHORT.observedAccuracy, 100);
+});
+
+test("evidence separates horizons and ignores plans that never entered", () => {
+  const evidence = computeEvidence([
+    { side: "LONG", horizon: "INTRADAY", result: "TARGET2", realizedR: 2.5 },
+    { side: "LONG", horizon: "SWING", result: "STOP", realizedR: -1 },
+    { side: "LONG", horizon: "SWING", result: "NO_ENTRY", realizedR: 0 }
+  ]);
+  assert.equal(evidence.sampleSize, 2);
+  assert.equal(evidence.byHorizon.INTRADAY.sampleSize, 1);
+  assert.equal(evidence.byHorizon.SWING.sampleSize, 1);
+  assert.equal(evidence.expectancyR, 0.75);
 });

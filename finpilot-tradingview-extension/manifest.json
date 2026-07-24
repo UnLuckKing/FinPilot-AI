@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "FinPilot TradingView Analyzer",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "minimum_chrome_version": "116",
-  "description": "TradingView grafiğini algılayan; BIST, ABD, kripto, forex, endeks ve emtiada ayrı LONG/SHORT planları üreten karar destek eklentisi.",
+  "description": "TradingView Free ile çalışan; 15 dk ve 1–5 gün için ayrı LONG/SHORT planları, işlem yaşam döngüsü ve otomatik Plan B üreten karar destek eklentisi.",
   "permissions": [
     "sidePanel",
     "storage",

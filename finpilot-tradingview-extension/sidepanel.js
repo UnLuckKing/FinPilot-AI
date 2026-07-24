@@ -5,6 +5,7 @@ let scannerLoaded = false;
 let lastSymbol = "";
 let lastAnalyzedAt = "";
 let lastResult = null;
+let selectedHorizon = "INTRADAY";
 let activeCategory = "ALL";
 let activeDirection = "ALL";
 let scanRequestId = 0;
@@ -28,12 +29,18 @@ document.querySelectorAll(".direction-chip").forEach((button) => {
 });
 elements.refreshButton.addEventListener("click", () => void refreshCurrent());
 elements.clearHistoryButton.addEventListener("click", () => void clearHistory());
+document.querySelectorAll(".horizon-card").forEach((button) => {
+  button.addEventListener("click", () => {
+    selectedHorizon = button.dataset.horizon;
+    if (lastResult) renderSelectedHorizon(lastResult);
+  });
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.latestBySymbol && activeTab === "analysis") void renderLatestForActiveContext();
   if ((changes.candidateSignals || changes.signalOutcomes) && activeTab === "evidence") void loadEvidence();
-  if ((changes.marketScanProgress || changes.marketScanResults) && activeTab === "scanner") void renderStoredScan();
+  if ((changes.marketScanProgress || changes.marketScanResults || changes.opportunityInbox) && activeTab === "scanner") void renderStoredScan();
 });
 
 void initialize();
@@ -106,7 +113,11 @@ async function renderLatestForActiveContext() {
 }
 
 function renderAnalysis(result, context = null) {
+  const symbolChanged = lastResult?.symbol !== result.symbol;
   lastResult = result;
+  if (symbolChanged || !result.horizons?.[horizonProperty(selectedHorizon)]) {
+    selectedHorizon = result.primaryHorizon ?? "INTRADAY";
+  }
   showState("content");
   setText("marketBadge", result.market || "OTHER");
   setText("symbolName", result.symbol || "—");
@@ -115,52 +126,142 @@ function renderAnalysis(result, context = null) {
   setText("healthText", `Veri ${number(result.dataHealth, 0)}/100`);
   elements.healthDot.style.background = result.dataHealth >= 80 ? "var(--green)" : result.dataHealth >= 55 ? "var(--amber)" : "var(--red)";
 
-  const verdictClass = verdictClassName(result.verdictCode, result.tradeSide, result.verdict);
-  elements.verdictCard.className = `verdict-card ${verdictClass}`;
-  setText("verdictText", result.verdict);
-  setText("verdictNote", verdictNote(result));
-  setText("technicalScore", `${number(result.technicalScore, 0)}/100`);
-  setText("dataHealth", `${number(result.dataHealth, 0)}/100`);
-  setText("setupName", result.setup || "—");
-  setText("signalState", result.signalState || "—");
-  setText("tradeSidePill", result.tradeSide || "—");
-  elements.tradeSidePill.className = `pill ${String(result.tradeSide ?? "NONE").toLowerCase()}`;
-  setText("triggerText", result.trigger?.confirmationText || "Yeni kapanış bekleniyor");
-  setText("decisionChangeText", result.trigger?.invalidationText || result.plan?.invalidation || "—");
-  setText("executionGuard", result.tradeSide === "SHORT"
-    ? `${result.execution?.status || "SHORT KONTROLÜ"} · ${result.execution?.label || "Uygun ürün doğrulanmalı"}`
-    : "LONG planı · Alım işlemini kendi aracı kurumunda sen uygularsın.");
-  elements.executionGuard.classList.toggle("blocked", result.tradeSide === "SHORT" && !result.execution?.actionable);
+  renderHorizonCards(result);
+  renderSelectedHorizon(result);
 
   renderDirection("intradayDirection", result.directions?.intraday, "intradayScore", `${signed(result.directionScores?.intraday)}/100`);
   renderDirection("oneDayDirection", result.directions?.oneDay, "oneDayRange", `Beklenen ${formatRange(result.expectedRanges?.oneDay)}`);
   renderDirection("oneWeekDirection", result.directions?.oneWeek, "oneWeekRange", `Beklenen ${formatRange(result.expectedRanges?.oneWeek)}`);
+  setText("analysisTime", `Analiz: ${formatTime(result.analyzedAt)} · ${result.disclaimer}`);
+  updateCandleCountdown();
+}
 
-  if (result.plan) {
+function renderSelectedHorizon(result) {
+  const decision = horizonDecision(result, selectedHorizon);
+  if (!decision) return;
+  document.querySelectorAll(".horizon-card").forEach((button) => {
+    button.classList.toggle("active", button.dataset.horizon === decision.horizon);
+  });
+  const verdictClass = verdictClassName(decision.verdictCode, decision.tradeSide, decision.verdict);
+  elements.verdictCard.className = `verdict-card ${verdictClass}`;
+  setText("decisionEyebrow", `${decision.horizonLabel ?? "15 DK"} SİSTEM KARARI`);
+  setText("verdictText", decision.decisionLabel ?? decision.verdict);
+  setText("verdictNote", verdictNote(decision));
+  setText("technicalScore", `${number(decision.technicalScore, 0)}/100`);
+  setText("dataHealth", `${number(result.dataHealth, 0)}/100`);
+  setText("setupName", decision.setup || "—");
+  setText("signalState", decision.signalState || "—");
+  setText("tradeSidePill", decision.tradeSide || "—");
+  elements.tradeSidePill.className = `pill ${String(decision.tradeSide ?? "NONE").toLowerCase()}`;
+  setText("triggerText", decision.trigger?.confirmationText || "Yeni kapanış bekleniyor");
+  setText("decisionChangeText", decision.trigger?.invalidationText || decision.plan?.invalidation || "—");
+  setText("executionGuard", decision.tradeSide === "SHORT"
+    ? `${decision.execution?.status || "SHORT KONTROLÜ"} · ${decision.execution?.label || "Uygun ürün doğrulanmalı"}`
+    : "LONG planı · Alım işlemini kendi aracı kurumunda sen uygularsın.");
+  elements.executionGuard.classList.toggle("blocked", decision.tradeSide === "SHORT" && !decision.execution?.actionable);
+
+  if (decision.plan) {
     elements.planSection.classList.remove("hidden");
-    setText("planTitle", result.plan.side === "SHORT" ? "Düşüş / SHORT seviyeleri" : "Yükseliş / LONG seviyeleri");
-    setText("riskRewardPill", `${number(result.plan.effectiveRewardRisk, 2)} R`);
-    setText("entryLow", price(result.plan.entryLow));
-    setText("entryHigh", price(result.plan.entryHigh));
-    setText("maximumChase", price(result.plan.maximumChase));
-    setText("chaseLabel", result.plan.side === "SHORT" ? "Altında kovalama" : "Üstünde kovalama");
-    setText("stopPrice", price(result.plan.stop));
-    setText("targetOne", price(result.plan.target1));
-    setText("targetTwo", price(result.plan.target2));
-    setText("invalidationText", result.plan.invalidation);
-    setText("quantityText", `100.000 birim portföyde %0,5 örnek risk adedi: ${number(result.plan.quantityPer100k, 0)}`);
+    setText("planTitle", decision.plan.side === "SHORT" ? `${decision.horizonLabel} düşüş / SHORT` : `${decision.horizonLabel} yükseliş / LONG`);
+    setText("riskRewardPill", `${number(decision.plan.effectiveRewardRisk, 2)} R`);
+    setText("entryLow", price(decision.plan.entryLow));
+    setText("entryHigh", price(decision.plan.entryHigh));
+    setText("maximumChase", price(decision.plan.maximumChase));
+    setText("chaseLabel", decision.plan.side === "SHORT" ? "Altında kovalama" : "Üstünde kovalama");
+    setText("stopPrice", price(decision.plan.stop));
+    setText("targetOne", price(decision.plan.target1));
+    setText("targetTwo", price(decision.plan.target2));
+    setText("invalidationText", decision.plan.invalidation);
+    setText("planValidity", `Geçerlilik: ${decision.plan.validity}`);
+    setText("quantityText", `100.000 birim portföyde %${number(decision.plan.riskPercent ?? 0.5, 2)} örnek risk adedi: ${number(decision.plan.quantityPer100k, 0)}`);
   } else {
     elements.planSection.classList.add("hidden");
   }
 
-  renderList(elements.reasonList, result.reasons?.length ? result.reasons : ["Olumlu teyit yok"]);
-  renderList(elements.blockerList, unique([...(result.blockers ?? []), ...(result.failed ?? [])]).slice(0, 8));
-  setText("metricRsi", metric(result.metrics?.rsi));
-  setText("metricAdx", metric(result.metrics?.adx));
-  setText("metricVolume", result.metrics?.relativeVolume ? `${number(result.metrics.relativeVolume, 2)}x` : "—");
-  setText("metricAtr", result.metrics?.atrPercent ? `%${number(result.metrics.atrPercent, 2)}` : "—");
-  setText("analysisTime", `Analiz: ${formatTime(result.analyzedAt)} · ${result.disclaimer}`);
+  renderLifecycle(decision);
+  renderStrategyTournament(decision);
+  renderPlanB(decision);
+  renderList(elements.reasonList, decision.reasons?.length ? decision.reasons : ["Olumlu teyit yok"]);
+  renderList(elements.blockerList, unique([...(decision.blockers ?? []), ...(decision.failed ?? [])]).slice(0, 9));
+  setText("metricRsi", metric(decision.metrics?.rsi));
+  setText("metricAdx", metric(decision.metrics?.adx));
+  setText("metricVolume", decision.metrics?.relativeVolume ? `${number(decision.metrics.relativeVolume, 2)}x` : "—");
+  setText("metricAtr", decision.metrics?.atrPercent ? `%${number(decision.metrics.atrPercent, 2)}` : "—");
   updateCandleCountdown();
+}
+
+function renderHorizonCards(result) {
+  const intraday = horizonDecision(result, "INTRADAY");
+  const swing = horizonDecision(result, "SWING");
+  setText("intradayDecisionLabel", intraday?.decisionLabel ?? intraday?.verdict ?? "Veri yok");
+  setText("intradayDecisionDetail", intraday ? `Güç ${number(intraday.technicalScore, 0)}/100 · ${intraday.setup}` : "15 dk planı yok");
+  setText("swingDecisionLabel", swing?.decisionLabel ?? swing?.verdict ?? "Veri yok");
+  setText("swingDecisionDetail", swing ? `Güç ${number(swing.technicalScore, 0)}/100 · ${swing.setup}` : "1–5 gün planı yok");
+}
+
+function renderLifecycle(decision) {
+  const active = lifecycleStep(decision);
+  const order = ["WATCH", "TRIGGER", "ENTRY", "TARGET1", "PROTECT", "EXIT"];
+  document.querySelectorAll("[data-life-step]").forEach((node) => {
+    const index = order.indexOf(node.dataset.lifeStep);
+    const activeIndex = order.indexOf(active);
+    node.classList.toggle("active", index === activeIndex);
+    node.classList.toggle("done", activeIndex > index);
+  });
+  setText("lifecycleHeadline", decision.signalState ?? "Plan izleniyor");
+  setText("lifecycleHorizon", decision.horizonLabel ?? "—");
+  setText("lifecycleNote", decision.actionable
+    ? `Giriş yalnız ${price(decision.plan?.entryLow)}–${price(decision.plan?.entryHigh)} gerçekleşirse başlar; Kâr 1 sonrası sistem stopu maliyete taşır.`
+    : decision.planB?.allowNew === false
+      ? decision.planB.reason
+      : "Fiyat giriş bölgesine değmeden işlem başlamış sayılmaz.");
+}
+
+function lifecycleStep(decision) {
+  if (decision.planB?.allowNew === false || decision.verdictCode <= 0) return "EXIT";
+  if (decision.verdictCode === 4) return "ENTRY";
+  if (decision.verdictCode === 3) return "TRIGGER";
+  return "WATCH";
+}
+
+function renderStrategyTournament(decision) {
+  const tournament = decision.strategyTournament;
+  setText("regimeName", decision.regime?.label ?? tournament?.regime ?? "Piyasa rejimi yok");
+  setText("selectedStrategy", decision.setup ?? "Kurulum yok");
+  elements.strategyList.replaceChildren();
+  for (const candidate of tournament?.candidates ?? []) {
+    const row = document.createElement("div");
+    row.className = `strategy-item${candidate.code === tournament.selectedCode ? " selected" : ""}`;
+    const label = document.createElement("span");
+    label.textContent = candidate.label;
+    const bar = document.createElement("div");
+    bar.className = "strategy-bar";
+    const fill = document.createElement("i");
+    fill.style.width = `${Math.max(0, Math.min(100, Number(candidate.score) || 0))}%`;
+    bar.append(fill);
+    const score = document.createElement("strong");
+    score.textContent = `${number(candidate.score, 0)}`;
+    row.append(label, bar, score);
+    elements.strategyList.append(row);
+  }
+  if (!tournament?.candidates?.length) elements.strategyList.textContent = "Strateji karşılaştırması yok.";
+}
+
+function renderPlanB(decision) {
+  const planB = decision.planB;
+  setText("planBStatus", planB?.status ?? "NORMAL");
+  setText("planBRisk", `%${number(planB?.riskPercent ?? decision.plan?.riskPercent ?? 0.5, 2)} risk`);
+  setText("planBReason", planB?.reason ?? "Aynı sembol ve vadede etkin stop soğuması yok.");
+  elements.planBPanel.classList.toggle("blocked", planB?.allowNew === false);
+}
+
+function horizonDecision(result, horizon) {
+  const property = horizonProperty(horizon);
+  return result?.horizons?.[property] ?? (result?.horizon === horizon ? result : null);
+}
+
+function horizonProperty(horizon) {
+  return horizon === "SWING" ? "swing" : "intraday";
 }
 
 async function scanWatchlist() {
@@ -236,7 +337,9 @@ function renderScanner(results) {
     const symbol = document.createElement("strong");
     symbol.textContent = result.symbol;
     const direction = document.createElement("span");
-    direction.textContent = `${result.tradeSide ?? "—"} · 1 gün ${result.directions?.oneDay ?? "—"} · 1 hafta ${result.directions?.oneWeek ?? "—"}`;
+    const intraday = horizonDecision(result, "INTRADAY");
+    const swing = horizonDecision(result, "SWING");
+    direction.textContent = `15 DK: ${intraday?.decisionLabel ?? "—"} · 1–5 GÜN: ${swing?.decisionLabel ?? "—"}`;
     const score = document.createElement("small");
     score.textContent = `LONG ${number(result.sideScores?.long, 0)} · SHORT ${number(result.sideScores?.short, 0)} · Veri ${number(result.dataHealth, 0)}/100`;
     const missing = document.createElement("small");
@@ -250,7 +353,7 @@ function renderScanner(results) {
     body.append(symbol, direction, score, missing, select);
     const verdict = document.createElement("div");
     verdict.className = `scanner-verdict ${verdictClassName(result.verdictCode, result.tradeSide, result.verdict)}`;
-    verdict.textContent = result.verdict;
+    verdict.textContent = result.decisionLabel ?? result.verdict;
     row.append(body, verdict);
     elements.scannerResults.append(row);
   }
@@ -260,6 +363,7 @@ function renderScanner(results) {
 async function openScannerResult(result) {
   lastSymbol = result.symbol;
   lastAnalyzedAt = result.analyzedAt;
+  selectedHorizon = result.primaryHorizon ?? result.horizon ?? "INTRADAY";
   renderAnalysis(result, {
     symbol: result.symbol,
     source: "küresel piyasa taraması",
@@ -290,9 +394,46 @@ async function renderStoredScan() {
     const dashboard = await send({ action: "GET_DASHBOARD" });
     if (!dashboard?.ok) return;
     renderScanState(dashboard.scanProgress, dashboard.scanResults ?? []);
+    renderInbox(dashboard.inbox ?? [], dashboard.scanResults ?? []);
   } catch {
     // Active scan request remains the fallback.
   }
+}
+
+function renderInbox(items, results) {
+  elements.opportunityInbox.classList.toggle("hidden", items.length === 0);
+  setText("inboxCount", `${items.length} kayıt`);
+  elements.inboxList.replaceChildren();
+  for (const item of items.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = "inbox-item";
+    const body = document.createElement("div");
+    const symbol = document.createElement("strong");
+    symbol.textContent = item.symbol;
+    const decision = document.createElement("span");
+    decision.textContent = `${item.decisionLabel ?? item.verdict} · ${item.setup ?? "—"}`;
+    const time = document.createElement("small");
+    time.textContent = `${item.horizonLabel ?? item.horizon} · ${formatTime(item.createdAt)}`;
+    body.append(symbol, decision, time);
+    const score = document.createElement("small");
+    score.textContent = `${number(item.technicalScore, 0)}/100`;
+    row.append(body, score);
+    row.addEventListener("click", () => void openInboxItem(item, results));
+    elements.inboxList.append(row);
+  }
+}
+
+async function openInboxItem(item, results) {
+  let result = results.find((candidate) => candidate.symbol === item.symbol);
+  if (!result) {
+    const response = await send({ action: "ANALYZE_SYMBOL", symbol: item.symbol });
+    result = response?.result;
+  }
+  if (!result) return;
+  selectedHorizon = item.horizon ?? result.primaryHorizon ?? "INTRADAY";
+  await openScannerResult(result);
+  selectedHorizon = item.horizon ?? selectedHorizon;
+  renderSelectedHorizon(result);
 }
 
 function renderScanState(progress, results) {
@@ -300,7 +441,9 @@ function renderScanState(progress, results) {
   const total = Number(progress.total) || results.length;
   const completed = Number(progress.completed) || results.length;
   const categoryResults = results.filter((item) => matchesCategory(item, activeCategory));
-  const filteredResults = categoryResults.filter((item) => matchesDirection(item, activeDirection));
+  const filteredResults = categoryResults
+    .map((item) => projectForDirection(item, activeDirection))
+    .filter(Boolean);
   const discoveredCounts = progress.discoveredCounts ?? {};
   const coverage = progress.coverage ?? {};
   const discovered = activeCategory === "ALL"
@@ -313,10 +456,14 @@ function renderScanState(progress, results) {
   const categoryTotal = activeCategory === "ALL" ? total : shortlisted;
   const percent = scanPercent(progress, completed, total);
   const completedScan = progress.status === "COMPLETED";
-  const longCount = categoryResults.filter((item) => item.tradeSide === "LONG" && item.verdictCode >= 3).length;
-  const shortCount = categoryResults.filter((item) => item.tradeSide === "SHORT" && item.verdictCode >= 3).length;
-  const declineCount = categoryResults.filter((item) => item.verdictCode === 1).length;
-  const confirmedCount = categoryResults.filter((item) => item.verdictCode === 4).length;
+  const longCount = categoryResults.filter((item) => decisionForSide(item, "LONG", 3)).length;
+  const shortCount = categoryResults.filter((item) => decisionForSide(item, "SHORT", 3)).length;
+  const declineCount = categoryResults.filter((item) =>
+    Object.values(item.horizons ?? { primary: item }).some((decision) => decision.verdictCode === 1)
+  ).length;
+  const confirmedCount = categoryResults.filter((item) =>
+    Object.values(item.horizons ?? { primary: item }).some((decision) => decision.verdictCode === 4)
+  ).length;
 
   elements.scanSummary.classList.remove("hidden");
   setText("scanDiscovered", discovered);
@@ -384,7 +531,7 @@ function matchesCategory(result, category) {
 
 function matchesDirection(result, direction) {
   if (direction === "ALL") return true;
-  return result?.tradeSide === direction;
+  return Boolean(decisionForSide(result, direction, -1));
 }
 
 function renderBestOpportunities(results, completedScan) {
@@ -402,17 +549,33 @@ function renderBestOpportunities(results, completedScan) {
 
 function bestForSide(results, side) {
   return results
-    .filter((item) => item.tradeSide === side && item.verdictCode >= 1 && item.dataHealth >= 55)
+    .map((item) => projectForDirection(item, side))
+    .filter((item) => item && item.verdictCode >= 1 && item.dataHealth >= 55)
     .sort((left, right) =>
       (Number(right.opportunityScore) || 0) - (Number(left.opportunityScore) || 0) ||
       (Number(right.technicalScore) || 0) - (Number(left.technicalScore) || 0)
     )[0] ?? null;
 }
 
+function projectForDirection(result, direction) {
+  if (direction === "ALL") return result;
+  const decision = decisionForSide(result, direction, -1);
+  return decision ? { ...result, ...decision, primaryHorizon: decision.horizon } : null;
+}
+
+function decisionForSide(result, side, minimumCode = -1) {
+  return Object.values(result?.horizons ?? { primary: result })
+    .filter((decision) => decision?.tradeSide === side && Number(decision.verdictCode) >= minimumCode)
+    .sort((left, right) =>
+      Number(right.verdictCode) - Number(left.verdictCode) ||
+      Number(right.opportunityScore) - Number(left.opportunityScore)
+    )[0] ?? null;
+}
+
 function renderBestCard(prefix, result, emptyText) {
   setText(`${prefix}Symbol`, result?.symbol || emptyText);
   setText(`${prefix}Detail`, result
-    ? `${result.verdict} · Güç ${number(result.technicalScore, 0)}/100 · ${result.setup}`
+    ? `${result.decisionLabel ?? result.verdict} · Güç ${number(result.technicalScore, 0)}/100 · ${result.setup}`
     : "Güvenli koşulları geçen aday bulunamadı.");
 }
 
@@ -430,6 +593,13 @@ async function loadEvidence() {
     setText("longSample", `${longEvidence.sampleSize ?? 0} sonuç`);
     setText("shortAccuracy", shortEvidence.observedAccuracy == null ? "—" : `%${number(shortEvidence.observedAccuracy, 1)}`);
     setText("shortSample", `${shortEvidence.sampleSize ?? 0} sonuç`);
+    const intradayEvidence = evidence.byHorizon?.INTRADAY ?? {};
+    const swingEvidence = evidence.byHorizon?.SWING ?? {};
+    setText("intradayAccuracy", intradayEvidence.observedAccuracy == null ? "—" : `%${number(intradayEvidence.observedAccuracy, 1)}`);
+    setText("intradaySample", `${intradayEvidence.sampleSize ?? 0} sonuç`);
+    setText("swingAccuracy", swingEvidence.observedAccuracy == null ? "—" : `%${number(swingEvidence.observedAccuracy, 1)}`);
+    setText("swingSample", `${swingEvidence.sampleSize ?? 0} sonuç`);
+    setText("observedExpectancy", evidence.expectancyR == null ? "—" : `${evidence.expectancyR > 0 ? "+" : ""}${number(evidence.expectancyR, 2)}R`);
     setText("candidateCount", `${dashboard.candidates?.length ?? 0} aday`);
     setText("outcomeCount", `${dashboard.outcomes?.length ?? 0} kapanmış`);
     renderHistory(elements.candidateList, dashboard.candidates ?? [], false);
@@ -453,9 +623,11 @@ function renderHistory(container, items, closed) {
     const symbol = document.createElement("strong");
     symbol.textContent = item.symbol;
     const detail = document.createElement("span");
-    detail.textContent = `${item.side ?? item.plan?.side ?? "LONG"} · ${item.verdict} · ${formatTime(item.createdAt)}`;
+    detail.textContent = `${item.horizonLabel ?? item.horizon ?? "15 DK"} · ${item.side ?? item.plan?.side ?? "LONG"} · ${item.decisionLabel ?? item.verdict} · ${formatTime(item.createdAt)}`;
     const status = document.createElement("small");
-    status.textContent = closed ? item.result : "TAKİPTE";
+    status.textContent = closed
+      ? `${outcomeLabel(item.result)}${Number.isFinite(Number(item.realizedR)) ? ` · ${signedR(item.realizedR)}` : ""}`
+      : item.state ?? "TAKİPTE";
     body.append(symbol, detail);
     row.append(body, status);
     container.append(row);
@@ -480,7 +652,8 @@ function showError(message) {
 }
 
 function verdictNote(result) {
-  if (result.verdict === "YATIR") return "Tüm LONG kapıları geçti. Seviyeleri kendi aracı kurumunda sen uygulayacaksın.";
+  if (result.planB?.allowNew === false) return result.planB.reason;
+  if (result.verdict === "YATIR") return `${result.horizonLabel ?? "15 DK"} LONG kapıları geçti. Yalnız giriş bölgesi gerçekleşirse plan başlar.`;
   if (result.verdict?.startsWith("YATIRILABİLİR")) return "Plan geçerli; güçlü karar için bazı yumuşak teyitler eksik.";
   if (result.verdict === "SHORT — DÜŞÜŞ İŞLEMİ") return "Düşüş kurulumu teyitli. Gerçek işlem için uygun SHORT ürünü ve aracı kurum gerekir.";
   if (result.verdict?.startsWith("SHORT ADAYI")) return "Düşüş planı oluştu; güçlü teyitlerin bir bölümü henüz eksik.";
@@ -517,6 +690,10 @@ function renderDetection(context, resultSymbol) {
 
 function updateCandleCountdown() {
   if (!lastResult || !elements.candleStatus) return;
+  if (selectedHorizon === "SWING") {
+    elements.candleStatus.textContent = "Swing kararı kapanmış günlük mumla kilitli · yeni günlük kapanıştan sonra yenilenir";
+    return;
+  }
   const interval = 15 * 60;
   const nowSeconds = Math.floor(Date.now() / 1_000);
   const remaining = interval - (nowSeconds % interval);
@@ -585,6 +762,26 @@ function signed(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "—";
   return `${numeric > 0 ? "+" : ""}${Math.round(numeric)}`;
+}
+
+function signedR(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "—";
+  return `${numeric > 0 ? "+" : ""}${number(numeric, 2)}R`;
+}
+
+function outcomeLabel(value) {
+  return ({
+    TARGET2: "KÂR 2",
+    TARGET1: "KÂR 1",
+    STOP: "STOP",
+    BREAKEVEN: "MALİYET",
+    TIME_EXIT: "SÜRELİ ÇIKIŞ",
+    NO_ENTRY: "GİRİŞ OLMADI",
+    MISSED: "GİRİŞ KAÇTI",
+    INVALIDATED: "PLAN BOZULDU",
+    EXPIRED: "SÜRESİ DOLDU"
+  })[value] ?? value;
 }
 
 function formatTime(value) {
