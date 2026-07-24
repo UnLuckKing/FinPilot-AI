@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "FinPilot TradingView Analyzer",
+  "version": "2.1.0",
+  "minimum_chrome_version": "116",
+  "description": "TradingView grafiğini algılayan; BIST, ABD, kripto, forex, endeks ve emtiada ayrı LONG/SHORT planları üreten karar destek eklentisi.",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "scripting",
+    "alarms",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*.tradingview.com/*",
+    "https://query1.finance.yahoo.com/*",
+    "https://query2.finance.yahoo.com/*",
+    "https://data-api.binance.vision/*",
+    "https://api.binance.com/*",
+    "https://kap.org.tr/*",
+    "https://www.kap.org.tr/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "FinPilot analiz panelini aç",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "32": "assets/icon32.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "32": "assets/icon32.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.tradingview.com/*"
+      ],
+      "js": [
+        "lib/detection-global.js",
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FinPilot Analyzer</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">F</div>
+        <div>
+          <strong>FinPilot</strong>
+          <span>TradingView Analyzer</span>
+        </div>
+      </div>
+      <button id="refreshButton" class="icon-button" type="button" title="Şimdi yenile" aria-label="Şimdi yenile">↻</button>
+    </header>
+
+    <nav class="tabs" aria-label="FinPilot bölümleri">
+      <button class="tab" type="button" data-tab="analysis">Grafik</button>
+      <button class="tab active" type="button" data-tab="scanner">Piyasalar</button>
+      <button class="tab" type="button" data-tab="evidence">Kanıt</button>
+    </nav>
+
+    <main>
+      <section id="analysisView" class="view" aria-live="polite">
+        <div id="loadingState" class="state-card">
+          <div class="spinner" aria-hidden="true"></div>
+          <strong>TradingView sembolü analiz ediliyor</strong>
+          <span>Kapanmış mumlar ve veri tazeliği kontrol ediliyor.</span>
+        </div>
+
+        <div id="errorState" class="state-card danger hidden">
+          <strong>Analiz başlatılamadı</strong>
+          <span id="errorMessage">TradingView grafiğini açıp tekrar deneyin.</span>
+        </div>
+
+        <div id="analysisContent" class="hidden">
+          <section class="symbol-strip">
+            <div>
+              <span id="marketBadge" class="badge">—</span>
+              <h1 id="symbolName">—</h1>
+              <p id="sourceText">—</p>
+              <p id="detectionText" class="detection-text">Grafik sembolü doğrulanıyor…</p>
+            </div>
+            <div class="freshness">
+              <span id="healthDot" class="dot"></span>
+              <span id="healthText">Veri kontrolü</span>
+            </div>
+          </section>
+
+          <section id="verdictCard" class="verdict-card">
+            <div class="eyebrow">SİSTEM KARARI</div>
+            <h2 id="verdictText">VERİ YETERSİZ</h2>
+            <p id="verdictNote">Veri bekleniyor.</p>
+            <div class="score-row">
+              <div>
+                <span>Teknik Güç</span>
+                <strong id="technicalScore">0/100</strong>
+              </div>
+              <div>
+                <span>Veri Sağlığı</span>
+                <strong id="dataHealth">0/100</strong>
+              </div>
+              <div>
+                <span>Kurulum</span>
+                <strong id="setupName">—</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="section decision-change">
+            <div class="decision-state-row">
+              <div>
+                <span class="eyebrow">SİNYAL DURUMU</span>
+                <strong id="signalState">—</strong>
+              </div>
+              <span id="tradeSidePill" class="pill neutral">—</span>
+            </div>
+            <div class="trigger-grid">
+              <div>
+                <span>Kararı güçlendiren seviye</span>
+                <strong id="triggerText">—</strong>
+              </div>
+              <div>
+                <span>Planı bozan koşul</span>
+                <strong id="decisionChangeText">—</strong>
+              </div>
+            </div>
+            <div id="executionGuard" class="execution-guard">İşlem uygulanabilirliği kontrol ediliyor.</div>
+            <small id="candleStatus">Yalnız kapanmış 15 dk mumlarla karar verilir.</small>
+          </section>
+
+          <section class="section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">YÖN ANALİZİ</span>
+                <h3>1 gün ve 1 hafta</h3>
+              </div>
+              <span class="hint">Olasılık değil, teknik model oyu</span>
+            </div>
+            <div class="direction-grid">
+              <article class="direction-card">
+                <span>15 DAKİKA</span>
+                <strong id="intradayDirection">—</strong>
+                <small id="intradayScore">0/100</small>
+              </article>
+              <article class="direction-card">
+                <span>1 GÜN</span>
+                <strong id="oneDayDirection">—</strong>
+                <small id="oneDayRange">Beklenen aralık —</small>
+              </article>
+              <article class="direction-card">
+                <span>1 HAFTA</span>
+                <strong id="oneWeekDirection">—</strong>
+                <small id="oneWeekRange">Beklenen aralık —</small>
+              </article>
+            </div>
+          </section>
+
+          <section id="planSection" class="section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">İŞLEM PLANI</span>
+                <h3 id="planTitle">Seviyeler</h3>
+              </div>
+              <span id="riskRewardPill" class="pill">— R</span>
+            </div>
+            <div class="plan-grid">
+              <div><span>Giriş alt</span><strong id="entryLow">—</strong></div>
+              <div><span>Giriş üst</span><strong id="entryHigh">—</strong></div>
+              <div><span id="chaseLabel">Kovalama sınırı</span><strong id="maximumChase">—</strong></div>
+              <div class="stop"><span>Stop</span><strong id="stopPrice">—</strong></div>
+              <div class="target"><span>Kâr 1</span><strong id="targetOne">—</strong></div>
+              <div class="target"><span>Kâr 2</span><strong id="targetTwo">—</strong></div>
+            </div>
+            <div class="plan-foot">
+              <span id="invalidationText">—</span>
+              <span id="quantityText">100.000 birim portföy için örnek adet: —</span>
+            </div>
+          </section>
+
+          <section class="section">
+            <details open>
+              <summary>Kararın gerekçeleri</summary>
+              <div class="reason-columns">
+                <div>
+                  <h4>Geçenler</h4>
+                  <ul id="reasonList" class="check-list"></ul>
+                </div>
+                <div>
+                  <h4>Eksikler / engeller</h4>
+                  <ul id="blockerList" class="block-list"></ul>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section class="metric-strip" aria-label="Teknik metrikler">
+            <div><span>RSI</span><strong id="metricRsi">—</strong></div>
+            <div><span>ADX</span><strong id="metricAdx">—</strong></div>
+            <div><span>Göreli hacim</span><strong id="metricVolume">—</strong></div>
+            <div><span>ATR</span><strong id="metricAtr">—</strong></div>
+          </section>
+
+          <p id="analysisTime" class="timestamp">—</p>
+        </div>
+      </section>
+
+      <section id="scannerView" class="view active" aria-live="polite">
+        <section class="section intro-card">
+          <span class="eyebrow">OTOMATİK KÜRESEL RADAR</span>
+          <h2>Tüm piyasalar tek yerde</h2>
+          <p>İzleme listesi veya açık grafik gerekmez. FinPilot evreni kendi keşfeder, hızlı ön elemeden geçirir ve güçlü adayları derin analiz eder.</p>
+        </section>
+
+        <div class="market-filter" role="group" aria-label="Sonuçları piyasaya göre filtrele">
+          <button class="market-chip active" type="button" data-category="ALL">Tümü <span id="countAll">—</span></button>
+          <button class="market-chip" type="button" data-category="BIST">BIST <span id="countBist">—</span></button>
+          <button class="market-chip" type="button" data-category="US">ABD <span id="countUs">—</span></button>
+          <button class="market-chip" type="button" data-category="CRYPTO">Kripto <span id="countCrypto">—</span></button>
+          <button class="market-chip" type="button" data-category="FOREX">Forex <span id="countForex">—</span></button>
+          <button class="market-chip" type="button" data-category="MACRO">Endeks/Emtia <span id="countMacro">—</span></button>
+        </div>
+
+        <div class="direction-filter" role="group" aria-label="Sonuçları işlem yönüne göre filtrele">
+          <button class="direction-chip active" type="button" data-direction="ALL">Tüm yönler</button>
+          <button class="direction-chip" type="button" data-direction="LONG">LONG</button>
+          <button class="direction-chip" type="button" data-direction="SHORT">SHORT / Düşüş</button>
+        </div>
+
+        <div id="scannerState" class="state-card compact scanner-state">
+          <div class="spinner" aria-hidden="true"></div>
+          <strong id="scanHeadline">Piyasa evreni hazırlanıyor</strong>
+          <span id="scanProgressText">KAP, Binance ve küresel piyasa kaynakları otomatik taranıyor.</span>
+          <div class="progress-track"><div id="scanProgressBar" class="progress-bar"></div></div>
+        </div>
+
+        <section id="scanSummary" class="scan-summary hidden">
+          <div><span>Keşfedilen</span><strong id="scanDiscovered">0</strong></div>
+          <div><span>Derin aday</span><strong id="scanShortlisted">0</strong></div>
+          <div><span>Analiz</span><strong id="scanCompleted">0/0</strong></div>
+          <div><span>LONG aday</span><strong id="scanInvestCount">0</strong></div>
+          <div><span>SHORT aday</span><strong id="scanOptionalCount">0</strong></div>
+          <div><span>Düşüş/Uzak dur</span><strong id="scanNoDataCount">0</strong></div>
+        </section>
+
+        <section id="bestOpportunities" class="best-opportunities hidden">
+          <article id="bestLongCard" class="best-card long">
+            <span>EN İYİ LONG</span>
+            <strong id="bestLongSymbol">Aday yok</strong>
+            <small id="bestLongDetail">Tarama devam ediyor.</small>
+          </article>
+          <article id="bestShortCard" class="best-card short">
+            <span>EN İYİ DÜŞÜŞ / SHORT</span>
+            <strong id="bestShortSymbol">Aday yok</strong>
+            <small id="bestShortDetail">Tarama devam ediyor.</small>
+          </article>
+        </section>
+
+        <section id="nearestBanner" class="nearest-banner hidden">
+          <span class="eyebrow">ONAYLI İŞLEM SİNYALİ YOK</span>
+          <strong>En yakın adaylar gösteriliyor</strong>
+          <p>Sistem sırf sonuç çıkarmak için LONG veya SHORT üretmez. Üstteki adaylarda hangi koşulun eksik olduğu yazılıdır.</p>
+        </section>
+        <div id="scannerResults" class="scanner-results"></div>
+      </section>
+
+      <section id="evidenceView" class="view" aria-live="polite">
+        <section class="evidence-hero">
+          <span class="eyebrow">İLERİYE DÖNÜK KANIT</span>
+          <strong id="observedAccuracy">—</strong>
+          <span id="evidenceInterval">Henüz kapanmış aday sinyal yok</span>
+          <small id="evidenceGrade">KANIT YOK</small>
+        </section>
+        <section class="evidence-side-grid">
+          <div><span>LONG gerçekleşme</span><strong id="longAccuracy">—</strong><small id="longSample">0 sonuç</small></div>
+          <div><span>SHORT gerçekleşme</span><strong id="shortAccuracy">—</strong><small id="shortSample">0 sonuç</small></div>
+        </section>
+        <section class="section">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">AÇIK TAKİP</span>
+              <h3 id="candidateCount">0 aday</h3>
+            </div>
+          </div>
+          <div id="candidateList" class="history-list empty-note">Açık aday yok.</div>
+        </section>
+        <section class="section">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">SONUÇLAR</span>
+              <h3 id="outcomeCount">0 kapanmış</h3>
+            </div>
+            <button id="clearHistoryButton" class="text-button" type="button">Yerel geçmişi temizle</button>
+          </div>
+          <div id="outcomeList" class="history-list empty-note">Sonuç yok.</div>
+        </section>
+      </section>
+    </main>
+
+    <footer>
+      <span class="dot live"></span>
+      <p>Emir göndermez. Teknik Güç olasılık değildir; SHORT için uygun ürün gerekir.</p>
+    </footer>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

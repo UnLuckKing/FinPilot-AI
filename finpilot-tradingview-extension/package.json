@@ -1,0 +1,14 @@
+{
+  "name": "finpilot-tradingview-extension",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check:extension": "node scripts/check-extension.mjs",
+    "check": "npm run test && npm run check:extension"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
