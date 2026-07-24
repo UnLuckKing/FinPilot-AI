@@ -1,9 +1,10 @@
-import { analyzeBundle, computeEvidence, SIDES, VERDICTS } from "./lib/engine.js";
+import { analyzeBundle, computeEvidence, HORIZONS, SIDES, VERDICTS } from "./lib/engine.js";
 import { discoverKapBistSymbols, discoverYahooUsSymbols } from "./lib/discovery.js";
+import { advanceCandidate, LIFE_STATES } from "./lib/lifecycle.js";
 import { discoverBinanceSpotSymbols, fetchDailyFrame, fetchMarketBundle } from "./lib/providers.js";
 import { prescreenSymbols } from "./lib/prefilter.js";
+import { evaluatePlanB, quantityForRisk } from "./lib/risk.js";
 import { parseTradingViewSymbol, sanitizeSymbolList } from "./lib/symbols.js";
-import { resolveCandidate } from "./lib/tracker.js";
 import { getMarketUniverse, marketCategoryCounts } from "./lib/universe.js";
 
 const STORAGE = Object.freeze({
@@ -14,6 +15,7 @@ const STORAGE = Object.freeze({
   logs: "activityLog",
   scanProgress: "marketScanProgress",
   scanResults: "marketScanResults",
+  inbox: "opportunityInbox",
   cryptoUniverse: "cryptoUniverse",
   bistUniverse: "bistUniverse",
   usUniverse: "usUniverse",
@@ -138,7 +140,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         STORAGE.outcomes,
         STORAGE.logs,
         STORAGE.scanProgress,
-        STORAGE.scanResults
+        STORAGE.scanResults,
+        STORAGE.inbox
       ]);
       const outcomes = stored[STORAGE.outcomes] ?? [];
       return {
@@ -149,7 +152,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         evidence: computeEvidence(outcomes),
         logs: stored[STORAGE.logs] ?? [],
         scanProgress: stored[STORAGE.scanProgress] ?? null,
-        scanResults: stored[STORAGE.scanResults] ?? []
+        scanResults: stored[STORAGE.scanResults] ?? [],
+        inbox: stored[STORAGE.inbox] ?? []
       };
     });
     return true;
@@ -157,7 +161,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (action === "CLEAR_LOCAL_HISTORY") {
     runAsync(sendResponse, async () => {
-      await chrome.storage.local.remove([STORAGE.candidates, STORAGE.outcomes, STORAGE.logs]);
+      await chrome.storage.local.remove([STORAGE.candidates, STORAGE.outcomes, STORAGE.logs, STORAGE.inbox]);
       return { ok: true };
     });
     return true;
@@ -179,12 +183,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function analyzeAndStore(symbol, options = {}) {
   const parsed = parseTradingViewSymbol(symbol);
   if (!parsed) throw new Error("Sembol biçimi geçersiz");
-  const before = options.scanMode ? {} : await chrome.storage.local.get(STORAGE.latest);
+  const before = options.scanMode
+    ? { [STORAGE.outcomes]: options.outcomes ?? [] }
+    : await chrome.storage.local.get([STORAGE.latest, STORAGE.outcomes]);
   const previous = before[STORAGE.latest]?.[parsed.full];
   let result;
   try {
     const bundle = await cachedMarketBundle(parsed.full);
-    result = analyzeBundle(bundle);
+    result = applyRiskControls(analyzeBundle(bundle), before[STORAGE.outcomes] ?? []);
   } catch (error) {
     result = failureResult(parsed.full, error);
   }
@@ -201,13 +207,13 @@ async function analyzeAndStore(symbol, options = {}) {
   await appendLog(`${parsed.full}: ${result.verdict}`);
   await registerCandidate(result);
 
-  const confirmedSignal = [VERDICTS.INVEST, VERDICTS.SHORT].includes(result.verdict);
+  const confirmedSignal = [VERDICTS.INVEST, VERDICTS.SHORT].includes(result.verdict) && result.actionable;
   if (options.notifyOnInvest && confirmedSignal && previous?.verdict !== result.verdict) {
     await chrome.notifications.create(`finpilot-${result.id}`, {
       type: "basic",
       iconUrl: "assets/icon128.png",
-      title: `${result.symbol} · ${result.verdict}`,
-      message: `${result.tradeSide} · Teknik Güç ${result.technicalScore}/100 · Giriş ${price(result.plan?.entryLow)}–${price(result.plan?.entryHigh)} · Stop ${price(result.plan?.stop)}`
+      title: `${result.symbol} · ${result.decisionLabel ?? result.verdict}`,
+      message: `${result.horizonLabel ?? "15 DK"} · ${result.tradeSide} · Güç ${result.technicalScore}/100 · Giriş ${price(result.plan?.entryLow)}–${price(result.plan?.entryHigh)} · Stop ${price(result.plan?.stop)}`
     }).catch(() => {});
   }
   return result;
@@ -350,6 +356,8 @@ async function scanSymbols(symbols, options = {}) {
   const results = [];
   const total = symbols.length;
   const startedAt = new Date().toISOString();
+  const storedEvidence = await chrome.storage.local.get(STORAGE.outcomes);
+  const outcomes = storedEvidence[STORAGE.outcomes] ?? [];
   if (options.marketScan) {
     await chrome.storage.local.set({
       [STORAGE.scanProgress]: {
@@ -371,7 +379,10 @@ async function scanSymbols(symbols, options = {}) {
   for (let index = 0; index < symbols.length; index += 5) {
     if (options.generation && options.generation !== scanGeneration) break;
     const batch = symbols.slice(index, index + 5);
-    const batchResults = await Promise.all(batch.map((symbol) => analyzeAndStore(symbol, { scanMode: options.marketScan })));
+    const batchResults = await Promise.all(batch.map((symbol) => analyzeAndStore(symbol, {
+      scanMode: options.marketScan,
+      outcomes
+    })));
     if (options.marketScan) {
       for (const result of batchResults) await registerCandidate(result);
     }
@@ -415,6 +426,7 @@ async function scanSymbols(symbols, options = {}) {
       },
       [STORAGE.scanResults]: sorted
     });
+    await updateOpportunityInbox(sorted);
   }
   return sorted;
 }
@@ -430,34 +442,61 @@ function cancelledScan() {
 }
 
 async function registerCandidate(result) {
-  if (
-    ![VERDICTS.INVEST, VERDICTS.OPTIONAL, VERDICTS.SHORT, VERDICTS.SHORT_OPTIONAL, VERDICTS.DECLINE].includes(result.verdict) ||
-    !result.plan ||
-    !result.barTime
-  ) return;
   const stored = await chrome.storage.local.get([STORAGE.candidates, STORAGE.outcomes]);
   const candidates = stored[STORAGE.candidates] ?? [];
   const outcomes = stored[STORAGE.outcomes] ?? [];
-  if (candidates.some((item) => item.id === result.id) || outcomes.some((item) => item.id === result.id)) return;
-  if (candidates.some((item) => item.symbol === result.symbol && item.side === result.tradeSide)) return;
-  const lastSameSide = outcomes.find((item) => item.symbol === result.symbol && item.side === result.tradeSide);
-  const cooldownActive = lastSameSide?.result === "STOP" &&
-    Date.now() - Date.parse(lastSameSide.closedAt) < 60 * 60_000 &&
-    lastSameSide.setupCode === result.setupCode;
-  if (cooldownActive) return;
-  candidates.unshift({
-    id: result.id,
-    symbol: result.symbol,
-    verdict: result.verdict,
-    side: result.tradeSide,
-    setupCode: result.setupCode,
-    technicalScore: result.technicalScore,
-    createdAt: result.barTime,
-    expiresAt: new Date(Date.parse(result.barTime) + 4 * 15 * 60_000).toISOString(),
-    plan: result.plan,
-    status: "OPEN"
-  });
-  await chrome.storage.local.set({ [STORAGE.candidates]: candidates.slice(0, 100) });
+  const decisions = result.horizons
+    ? Object.values(result.horizons)
+    : [result];
+  let changed = false;
+
+  for (const decision of decisions) {
+    if (
+      ![VERDICTS.INVEST, VERDICTS.OPTIONAL, VERDICTS.SHORT, VERDICTS.SHORT_OPTIONAL].includes(decision?.verdict) ||
+      !decision?.actionable ||
+      !decision.plan ||
+      !decision.barTime
+    ) continue;
+    if (candidates.some((item) => item.id === decision.id) || outcomes.some((item) => item.id === decision.id)) continue;
+    if (candidates.some((item) =>
+      item.symbol === result.symbol &&
+      item.side === decision.tradeSide &&
+      item.horizon === decision.horizon
+    )) continue;
+    if (decision.planB?.allowNew === false) continue;
+
+    const createdAt = Date.parse(decision.barTime);
+    const entryValidityMs = Number(decision.plan.entryValidityMs) ||
+      (decision.horizon === HORIZONS.SWING ? 2 * 24 * 60 * 60_000 : 4 * 15 * 60_000);
+    candidates.unshift({
+      id: decision.id,
+      symbol: result.symbol,
+      verdict: decision.verdict,
+      decisionLabel: decision.decisionLabel,
+      side: decision.tradeSide,
+      horizon: decision.horizon,
+      horizonLabel: decision.horizonLabel,
+      setup: decision.setup,
+      setupCode: decision.setupCode,
+      technicalScore: decision.technicalScore,
+      createdAt: decision.barTime,
+      entryExpiresAt: new Date(createdAt + entryValidityMs).toISOString(),
+      maxHoldingMs: decision.plan.maxHoldingMs,
+      entryMaxBars: decision.plan.entryMaxBars,
+      maxHoldingBars: decision.plan.maxHoldingBars,
+      barsSinceSignal: 0,
+      holdingBars: 0,
+      plan: decision.plan,
+      trigger: decision.trigger,
+      state: [VERDICTS.OPTIONAL, VERDICTS.SHORT_OPTIONAL].includes(decision.verdict)
+        ? LIFE_STATES.WAITING_TRIGGER
+        : LIFE_STATES.WAITING_ENTRY,
+      status: "OPEN",
+      events: []
+    });
+    changed = true;
+  }
+  if (changed) await chrome.storage.local.set({ [STORAGE.candidates]: candidates.slice(0, 160) });
 }
 
 async function updateTrackedSignals() {
@@ -482,17 +521,133 @@ async function updateTrackedSignals() {
       open.push(...items);
       continue;
     }
-    const bars = bundle.frames?.fifteen ?? [];
     for (const candidate of items) {
-      const result = resolveCandidate(candidate, bars);
-      if (result) closed.push(result);
-      else open.push(candidate);
+      const bars = candidate.horizon === HORIZONS.SWING
+        ? bundle.frames?.day ?? []
+        : bundle.frames?.fifteen ?? [];
+      const transition = advanceCandidate(candidate, bars);
+      if (transition.outcome) closed.push(transition.outcome);
+      else if (transition.candidate) open.push(transition.candidate);
+      await notifyLifecycleEvents(candidate, transition.events);
     }
   }
   await chrome.storage.local.set({
     [STORAGE.candidates]: open.slice(0, 100),
     [STORAGE.outcomes]: [...closed, ...outcomes].slice(0, 500)
   });
+}
+
+function applyRiskControls(result, outcomes) {
+  if (!result?.plan && !result?.horizons) return result;
+  const applyDecision = (decision) => {
+    if (!decision?.plan) return decision;
+    const planB = evaluatePlanB({ ...decision, symbol: result.symbol }, outcomes);
+    const plan = {
+      ...decision.plan,
+      riskPercent: planB.riskPercent,
+      quantityPer100k: quantityForRisk(decision.plan, planB.riskPercent)
+    };
+    const next = { ...decision, plan, planB };
+    if (planB.allowNew === false && next.actionable) {
+      next.rawVerdict = next.verdict;
+      next.rawDecisionLabel = next.decisionLabel;
+      next.verdict = VERDICTS.WAIT;
+      next.decisionLabel = `PLAN B · ${planB.status}`;
+      next.verdictCode = 2;
+      next.actionable = false;
+      next.signalState = planB.status;
+      next.blockers = [planB.reason, ...(next.blockers ?? [])];
+    }
+    return next;
+  };
+
+  if (!result.horizons) return applyDecision(result);
+  const horizons = {
+    intraday: applyDecision(result.horizons.intraday),
+    swing: applyDecision(result.horizons.swing)
+  };
+  const primary = [horizons.intraday, horizons.swing].sort((left, right) =>
+    Number(right?.verdictCode ?? -1) - Number(left?.verdictCode ?? -1) ||
+    Number(right?.opportunityScore ?? 0) - Number(left?.opportunityScore ?? 0) ||
+    Number(right?.technicalScore ?? 0) - Number(left?.technicalScore ?? 0)
+  )[0];
+  return {
+    ...result,
+    ...primary,
+    horizons,
+    primaryHorizon: primary?.horizon ?? result.primaryHorizon
+  };
+}
+
+async function updateOpportunityInbox(results) {
+  const stored = await chrome.storage.local.get(STORAGE.inbox);
+  const previous = stored[STORAGE.inbox] ?? [];
+  const firstRun = previous.length === 0;
+  const now = Date.now();
+  const decisions = results.flatMap((result) => {
+    const horizons = result.horizons ? Object.values(result.horizons) : [result];
+    return horizons.map((decision) => ({ ...decision, symbol: result.symbol, market: result.market }));
+  }).filter((decision) =>
+    decision.actionable &&
+    decision.verdictCode >= 3 &&
+    decision.planB?.allowNew !== false
+  ).sort((left, right) =>
+    Number(right.verdictCode) - Number(left.verdictCode) ||
+    Number(right.opportunityScore) - Number(left.opportunityScore)
+  );
+
+  const additions = [];
+  for (const decision of decisions.slice(0, 20)) {
+    const dedupeMs = decision.horizon === HORIZONS.SWING ? 24 * 60 * 60_000 : 60 * 60_000;
+    const duplicate = [...previous, ...additions].some((item) =>
+      item.symbol === decision.symbol &&
+      item.horizon === decision.horizon &&
+      item.side === decision.tradeSide &&
+      item.setupCode === decision.setupCode &&
+      now - Date.parse(item.createdAt) < dedupeMs
+    );
+    if (duplicate) continue;
+    additions.push({
+      id: `inbox-${decision.id}`,
+      resultId: decision.id,
+      symbol: decision.symbol,
+      market: decision.market,
+      horizon: decision.horizon,
+      horizonLabel: decision.horizonLabel,
+      side: decision.tradeSide,
+      verdict: decision.verdict,
+      decisionLabel: decision.decisionLabel,
+      verdictCode: decision.verdictCode,
+      setup: decision.setup,
+      setupCode: decision.setupCode,
+      technicalScore: decision.technicalScore,
+      opportunityScore: decision.opportunityScore,
+      plan: decision.plan,
+      createdAt: new Date().toISOString()
+    });
+  }
+  if (additions.length === 0) return;
+  await chrome.storage.local.set({ [STORAGE.inbox]: [...additions, ...previous].slice(0, 60) });
+  if (firstRun) return;
+  for (const item of additions.filter((entry) => entry.verdictCode !== 3).slice(0, 3)) {
+    await chrome.notifications.create(item.id, {
+      type: "basic",
+      iconUrl: "assets/icon128.png",
+      title: `Yeni fırsat · ${item.symbol}`,
+      message: `${item.decisionLabel} · ${item.setup} · Giriş ${price(item.plan?.entryLow)}–${price(item.plan?.entryHigh)}`
+    }).catch(() => {});
+  }
+}
+
+async function notifyLifecycleEvents(previous, events) {
+  const event = events?.at(-1);
+  if (!event || !["ENTRY", "TARGET1", "TARGET2", "STOP", "BREAKEVEN", "TIME_EXIT"].includes(event.type)) return;
+  await chrome.notifications.create(`finpilot-life-${previous.id}-${event.type}-${Date.parse(event.at)}`, {
+    type: "basic",
+    iconUrl: "assets/icon128.png",
+    title: `${previous.symbol} · ${event.message}`,
+    message: `Otomatik kâğıt takip · ${previous.horizonLabel ?? previous.horizon} · ${previous.side} · ${price(event.price)}`
+  }).catch(() => {});
 }
 
 async function activeContext() {
@@ -678,7 +833,12 @@ function failureResult(symbol, error) {
     analyzedAt: new Date().toISOString(),
     barTime: null,
     verdict: VERDICTS.NO_DATA,
+    decisionLabel: VERDICTS.NO_DATA,
     verdictCode: -1,
+    horizon: HORIZONS.INTRADAY,
+    horizonLabel: "15 DK",
+    primaryHorizon: HORIZONS.INTRADAY,
+    horizons: null,
     tradeSide: SIDES.NONE,
     actionable: false,
     signalState: "VERİ BEKLİYOR",
@@ -698,6 +858,7 @@ function failureResult(symbol, error) {
     blockers: [String(error?.message || "Piyasa verisi alınamadı").slice(0, 180)],
     factors: [],
     metrics: {},
+    freeMode: true,
     disclaimer: "Veri alınamadığı için olumlu işlem kararı üretilmedi."
   };
 }

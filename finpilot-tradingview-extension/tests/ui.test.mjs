@@ -28,4 +28,10 @@ test("general market radar controls are present", async () => {
   assert.match(html, /id="bestShortCard"/u);
   assert.match(html, /id="detectionText"/u);
   assert.match(html, /id="executionGuard"/u);
+  assert.match(html, /id="intradayHorizonCard"/u);
+  assert.match(html, /id="swingHorizonCard"/u);
+  assert.match(html, /id="strategyList"/u);
+  assert.match(html, /id="planBPanel"/u);
+  assert.match(html, /id="opportunityInbox"/u);
+  assert.match(html, /FREE MODE/u);
 });
