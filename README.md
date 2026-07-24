@@ -14,6 +14,14 @@ FinPilot, TradingView içindeki piyasa verilerini kullanarak **manuel işlem kar
 
 Bu ifadeler yazılımın teknik sınıflandırmalarıdır; kâr garantisi veya kişisel yatırım danışmanlığı değildir.
 
+## Chrome eklentisi v2.1
+
+TradingView yanında doğrudan çalışan yeni sürüm ayrı bir klasördedir:
+
+**[`finpilot-tradingview-extension/`](finpilot-tradingview-extension/)**
+
+Bu sürüm açık grafiği otomatik algılar, algılama koparsa kendini yeniden bağlar, bütün keşfedilen piyasa evrenini iki aşamalı tarar ve LONG ile SHORT/düşüş kurulumlarını ayrı modellerle değerlendirir. Spot veya açığa satış uygunluğu doğrulanmamış bir üründe yanıltıcı `SHORT` üretmez; `DÜŞÜŞ — UZAK DUR` gösterir. Kurulum adımları klasörün içindeki [`KURULUM.md`](finpilot-tradingview-extension/KURULUM.md) dosyasındadır.
+
 ## Çalışan özellikler
 
 - TradingView **Pine Screener** için tüm sembol türlerini otomatik tanıyan `Universal Radar`
